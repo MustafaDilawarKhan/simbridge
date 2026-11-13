@@ -1,0 +1,16 @@
+# Store and check out text files with LF line endings on every OS.
+# Without this, Windows turns LF into CRLF and breaks shell scripts on runners.
+* text=auto eol=lf
+
+# Windows-only scripts need CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never touch binary files.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
