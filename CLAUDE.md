@@ -9,8 +9,14 @@ runs on a USB iPhone; AI agents drive everything through an MCP server.
 
 **R0: proof of concept.** Goal: prove a simulator on a GitHub runner can be
 streamed to Windows with usable lag, through a Cloudflare quick tunnel.
-- Gate to pass before R1: under 3 min to a usable simulator, under 400 ms tap lag,
-  and the MJPEG stream plus a WebSocket log stream both work through the tunnel.
+- Gate to pass before R1: under 3 min to a usable simulator, under 400 ms median
+  tap lag, and the MJPEG stream plus a WebSocket log stream both work through
+  the tunnel.
+- How the gate is measured: the 3 min runs from simulator boot to tunnel ready
+  (boot, install, launch, tunnel). The app build is timed separately, because R1
+  sessions start from a saved build. The 95th percentile lag is reported for
+  information only.
+- The spike prints the tunnel URL and a per-run token only in encrypted form.
 - Do NOT build R1 features (CLI, MCP server, desktop app) until the gate passes.
 - Update this section whenever the phase changes.
 
@@ -38,6 +44,9 @@ streamed to Windows with usable lag, through a Cloudflare quick tunnel.
   (SDS 3.5) so Tailscale can be added later without touching other code.
 - **Live streams use WebSockets, never SSE:** quick tunnels do not support
   Server-Sent Events (FR-SIM-13). MJPEG through the tunnel is checked in R0.
+- **Session token:** never in a URL. HTTP and the MJPEG stream use a short-lived
+  HttpOnly cookie from `POST /auth`; WebSockets (`/ws/logs`, `/ws/stats`) send the
+  token as their first message (SDS 6.3, ADR 0008). Only the R0 spike uses `?t=`.
 - **Sign-in:** GitHub App with device flow and per-repo access; permission list in SDS 3.1.
   Never request more permissions than that table.
 - **Device conditions are required (Must):** network, GPS, push, permissions (SDS 3.11).
@@ -54,8 +63,10 @@ packages/
   session-agent/   # runs on the macOS runner (SDS 7.2)
   desktop/         # Electron + React UI (built last)
 workflows/         # templates copied into user repos: build, session, test
-docs/              # SRS.md, SDS.md
+docs/              # SRS.md, SDS.md, adr/ (decision records), prompts/
 ```
+
+`workflows/` is created in R1, not before.
 
 ## Tech stack
 
@@ -110,3 +121,18 @@ Add one line per decision: date, decision, why.
 - 2026-11-14: WebSockets instead of SSE for logs, stats and control (quick tunnels do not support SSE).
 - 2026-11-14: GitHub App (device flow, per-repo) for sign-in, not an OAuth App (FR-SET-01).
 - 2026-11-14: Flutter hot reload on the runner is a Should in R3, starting with a timeboxed spike; rebuild is the fallback (FR-SIM-10, SDS 4.9).
+- 2026-11-14: R0 gate measured from simulator boot to tunnel ready, build timed separately; tap lag judged on the median, p95 reported (the spike builds in-job, R1 will not).
+- 2026-11-14: Session token goes by HttpOnly cookie (HTTP, MJPEG) and first WebSocket message, never in a URL; browsers cannot set an Authorization header on an image stream or a WebSocket (ADR 0008). R0 spike alone uses `?t=`.
+- 2026-11-14: WebSocket paths are `/ws/logs` and `/ws/stats` (SDS 6.3).
+- 2026-11-14: Node.js 20 is the minimum everywhere; CI pins 20.
+
+## Open items
+
+Known gaps with no action yet. Remove a line when it is resolved.
+- **R1 planning, stale JavaScript:** a JS-only change would reuse a saved build
+  that still holds the old JavaScript, because the fingerprint covers only native
+  files and Metro live reload arrives in R2 (FR-SIM-09). Plan: include JS sources
+  in the fingerprint, plus a cheap "re-bundle only" path that rebuilds just the JS
+  bundle and swaps it into the saved .app. Revise NFR-COST-01 and SDS 3.3 then.
+- **R1, session cookie details:** lifetime, `SameSite` value and WebSocket auth
+  timeout (ADR 0008).
