@@ -1,0 +1,13 @@
+# Build output and installed packages
+dist/
+coverage/
+node_modules/
+package-lock.json
+
+# The SRS and SDS keep their own table layout. Formatting them would rewrite
+# every table and bury real changes in the diff.
+docs/SRS.md
+docs/SDS.md
+
+# Prompts are kept word for word as they were used.
+docs/prompts/

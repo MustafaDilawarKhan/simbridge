@@ -27,8 +27,8 @@ The session token is presented in two ways, and never in a URL:
 1. **HTTP and the MJPEG stream:** the client sends the token once, in an
    `Authorization: Bearer` header, to `POST /auth`. The session agent replies
    with a short-lived cookie marked `HttpOnly` and `Secure`. All other HTTP
-   endpoints, including `GET /stream`, accept only that cookie. `POST
-   /heartbeat` renews it.
+   endpoints, including `GET /stream`, accept only that cookie. Each call to
+   `POST /heartbeat` renews it.
 2. **WebSockets:** the client's first message must be
    `{ "type": "auth", "token": "<session token>" }`. The agent sends nothing
    before it and closes the socket if it is wrong or late.

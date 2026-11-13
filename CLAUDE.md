@@ -9,6 +9,7 @@ runs on a USB iPhone; AI agents drive everything through an MCP server.
 
 **R0: proof of concept.** Goal: prove a simulator on a GitHub runner can be
 streamed to Windows with usable lag, through a Cloudflare quick tunnel.
+
 - Gate to pass before R1: under 3 min to a usable simulator, under 400 ms median
   tap lag, and the MJPEG stream plus a WebSocket log stream both work through
   the tunnel.
@@ -70,19 +71,24 @@ docs/              # SRS.md, SDS.md, adr/ (decision records), prompts/
 
 ## Tech stack
 
-- TypeScript, Node.js 20, npm workspaces
-- Vitest for tests; Playwright for the Electron UI later
+- TypeScript 6 (strict), Node.js 20, npm workspaces
+- ESLint (typescript-eslint) and Prettier
+- Vitest 4 for tests; Playwright for the Electron UI later
 - Octokit (GitHub API), official MCP TypeScript SDK, better-sqlite3
 - go-ios (device control), serve-sim (simulator stream), Maestro (tests),
   cloudflared (tunnel)
 
 ## Commands
 
-Fill these in as they come to exist:
-- Install: `npm install`
+Run from the repo root. CI runs the same checks on every pull request.
+
+- Install: `npm install` (CI uses `npm ci`)
 - Test: `npm test`
-- Lint/format: `npm run lint`
-- Run CLI locally: `npm run cli -- <command>`
+- Lint: `npm run lint`
+- Format: `npm run format` to fix, `npm run format:check` to only check
+- Typecheck: `npm run typecheck`
+- Build all packages: `npm run build`
+- Run CLI locally: not yet, the CLI arrives in R1
 
 ## How to work in this repo
 
@@ -114,6 +120,7 @@ Fill these in as they come to exist:
 ## Decisions log
 
 Add one line per decision: date, decision, why.
+
 - 2026-11-13: Session URL hand-off via encrypted check run, not job outputs (outputs unreadable mid-job).
 - 2026-11-13: Device conditions are Must; simulator location/push/permissions in R1, network shaping + iPhone in R2.
 - 2026-11-13: Android is R4, built only if time allows; runs fully on the PC.
@@ -125,10 +132,13 @@ Add one line per decision: date, decision, why.
 - 2026-11-14: Session token goes by HttpOnly cookie (HTTP, MJPEG) and first WebSocket message, never in a URL; browsers cannot set an Authorization header on an image stream or a WebSocket (ADR 0008). R0 spike alone uses `?t=`.
 - 2026-11-14: WebSocket paths are `/ws/logs` and `/ws/stats` (SDS 6.3).
 - 2026-11-14: Node.js 20 is the minimum everywhere; CI pins 20.
+- 2026-11-14: TypeScript 6 and Vitest 4, not the newest majors: typescript-eslint does not support TypeScript 7 yet, and Vitest 5 needs Node 22.
+- 2026-11-14: Licence is MIT.
 
 ## Open items
 
 Known gaps with no action yet. Remove a line when it is resolved.
+
 - **R1 planning, stale JavaScript:** a JS-only change would reuse a saved build
   that still holds the old JavaScript, because the fingerprint covers only native
   files and Metro live reload arrives in R2 (FR-SIM-09). Plan: include JS sources
@@ -136,3 +146,10 @@ Known gaps with no action yet. Remove a line when it is resolved.
   bundle and swaps it into the saved .app. Revise NFR-COST-01 and SDS 3.3 then.
 - **R1, session cookie details:** lifetime, `SameSite` value and WebSocket auth
   timeout (ADR 0008).
+- **Node.js version:** Node 20 reached end of life in April 2026 and new tool
+  majors (Vitest 5) already need Node 22. Decide before R1 whether to move the
+  minimum to Node 22; that would also unlock Vitest 5.
+- **npm 10.9 resolver crash:** `npm install <new package>` can fail with
+  "Cannot read properties of null (reading 'edgesOut')". Workaround: run that
+  one install with `npx npm@11 install ...`. `npm ci` and a plain `npm install`
+  from the lockfile work fine on npm 10.
