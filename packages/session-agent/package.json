@@ -1,0 +1,22 @@
+{
+  "name": "simbridge-session-agent",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Runs on the GitHub macOS runner: boots the simulator, starts serve-sim and the tunnel, serves the session API and ends the job on its own.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json"
+  }
+}

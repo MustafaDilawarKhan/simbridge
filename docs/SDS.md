@@ -1,6 +1,6 @@
 # SDS: iOS Agent Build Tool
 
-Version 1.0 · 13 November 2026 · Author: Furqan
+Version 1.1 · 14 November 2026 · Author: Furqan
 
 ## 1. Introduction
 
@@ -634,20 +634,33 @@ All commands accept `--json` and exit with 0 on success, 1 on user error, 2 on s
 
 ### 6.3 Runner session API (Mode B)
 
-Served by the session agent behind the tunnel. Every request needs the header `Authorization: Bearer <session token>`.
+Served by the session agent behind the tunnel. Every request must prove it holds the session token (NFR-SEC-03), and the token never travels in a URL.
 
-| Method and path          | Purpose                                                                                                  |
-|--------------------------|----------------------------------------------------------------------------------------------------------|
-| GET /stream              | MJPEG video proxied from serve-sim; if the tunnel buffers it, frames move to a WebSocket (checked in R0) |
-| POST /input              | tap, swipe, type, button (forwarded to serve-sim)                                                        |
-| GET /screenshot          | Current PNG                                                                                              |
-| GET /a11y                | Accessibility tree                                                                                       |
-| GET /logs (WebSocket)    | Live log lines                                                                                           |
-| GET /stats (WebSocket)   | Stat samples every second                                                                                |
-| POST /condition          | Location, push, permission                                                                               |
-| POST /heartbeat          | Resets the idle timer; returns idle_left_sec and cap_left_sec                                            |
-| POST /shutdown           | Ends the session now                                                                                     |
-| POST /sync (R3, Flutter) | Receives changed .dart files, writes them into the runner's checkout, then triggers hot reload           |
+| Method and path            | Purpose                                                                                                  |
+|----------------------------|----------------------------------------------------------------------------------------------------------|
+| POST /auth                 | Exchanges the session token for the session cookie (see "Authentication" below)                          |
+| GET /stream                | MJPEG video proxied from serve-sim; if the tunnel buffers it, frames move to a WebSocket (checked in R0) |
+| POST /input                | tap, swipe, type, button (forwarded to serve-sim)                                                        |
+| GET /screenshot            | Current PNG                                                                                              |
+| GET /a11y                  | Accessibility tree                                                                                       |
+| GET /ws/logs (WebSocket)   | Live log lines                                                                                           |
+| GET /ws/stats (WebSocket)  | Stat samples every second                                                                                |
+| POST /condition            | Location, push, permission                                                                               |
+| POST /heartbeat            | Resets the idle timer; renews the session cookie; returns idle_left_sec and cap_left_sec                 |
+| POST /shutdown             | Ends the session now                                                                                     |
+| POST /sync (R3, Flutter)   | Receives changed .dart files, writes them into the runner's checkout, then triggers hot reload           |
+
+#### Authentication
+
+A browser cannot attach an `Authorization` header to an `<img>` MJPEG stream or to a WebSocket, so a header-only rule would lock out the desktop UI. The session token is therefore presented in two ways (ADR 0008):
+
+- **HTTP and the MJPEG stream:** the client calls `POST /auth` once with the header `Authorization: Bearer <session token>`. The agent answers with a short-lived cookie marked `HttpOnly` and `Secure`. Every other HTTP endpoint, including `GET /stream`, accepts only that cookie. Each `POST /heartbeat` renews it, so the cookie dies soon after the client goes away.
+
+- **WebSockets (`/ws/logs`, `/ws/stats`):** the first message from the client must be `{ "type": "auth", "token": "<session token>" }`. The agent sends no data before that message, and closes the socket if the message is wrong or does not arrive within a few seconds.
+
+- **Never in a URL:** URLs end up in logs, browser history and proxy records, so no released endpoint accepts the token as a query parameter. The one exception is the throwaway R0 spike, which uses `?t=<token>` to stay small.
+
+The exact cookie lifetime, its `SameSite` setting and the WebSocket auth timeout are fixed when the session agent is built in R1.
 
 ### 6.4 Workflow inputs and outputs
 
@@ -746,7 +759,7 @@ The main risks are a leaked session URL, leaked signing secrets, and a runner le
 
 | Threat                                                  | Control                                                                                                                   | SRS                       |
 |---------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------|---------------------------|
-| Someone finds the tunnel URL and controls the simulator | 128-bit per-session bearer token on every request; URL and token sent encrypted to the client only                        | NFR-SEC-03                |
+| Someone finds the tunnel URL and controls the simulator | 128-bit per-session token checked on every request (cookie for HTTP, first message for WebSockets, never in a URL; 6.3); URL and token sent encrypted to the client only | NFR-SEC-03                |
 | Signing certificate or ASC key leaks                    | Stored only as GitHub secrets; used in one step with a temporary keychain that is deleted; never logged                   | FR-BUD-05, NFR-SEC-01     |
 | GitHub token stolen from the PC                         | Windows Credential Manager; GitHub App with per-repo access; short-lived user tokens                                      | NFR-SEC-01, 02            |
 | Runner left running, burning minutes                    | Runner-side watchdog independent of the client; job timeout backstop; concurrency group                                   | FR-SIM-06, 07, NFR-REL-02 |

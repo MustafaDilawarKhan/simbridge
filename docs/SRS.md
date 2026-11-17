@@ -1,6 +1,6 @@
 # SRS: iOS Agent Build Tool
 
-Version 1.0 · 13 November 2026 · Author: Furqan
+Version 1.1 · 14 November 2026 · Author: Furqan
 
 ## 1. Introduction
 
@@ -62,7 +62,7 @@ SimBridge is a Windows desktop app plus an MCP server that orchestrates work the
 
 SimBridge is a new, self-contained product that sits on top of existing services and open-source tools:
 
-- **GitHub** (OAuth, repos, Actions, artifacts, secrets) provides the Mac hardware and storage
+- **GitHub** (GitHub App sign-in, repos, Actions, artifacts, secrets) provides the Mac hardware and storage
 - **Apple App Store Connect API** provides certificates, provisioning profiles and TestFlight
 - **serve-sim** streams and controls the simulator on the runner
 - **go-ios + WebDriverAgent** stream and control a real iPhone over USB
@@ -99,7 +99,7 @@ People and agents talk only to SimBridge; SimBridge drives GitHub, the runner, A
 ### 2.3 Operating environment
 
 - Client: Windows 10/11 (64-bit); Linux and macOS clients are a later goal
-- Runtime: Node.js 18+ for the CLI and MCP server; Go binaries for go-ios
+- Runtime: Node.js 20+ for the CLI and MCP server; Go binaries for go-ios
 - Mode A: iPhone on iOS 16+ connected by USB; Apple device drivers installed on Windows
 - Mode B and C: GitHub-hosted standard macOS runners with Xcode and simulators preinstalled
 - Network: outbound HTTPS only; no inbound ports opened on the user's PC
@@ -122,7 +122,7 @@ People and agents talk only to SimBridge; SimBridge drives GitHub, the runner, A
 
 ## 3. Functional requirements
 
-SimBridge has 15 modules and 133 functional requirements. Priority uses MoSCoW (Must, Should, Could); release R1 is the first version, R2 and R3 follow (section 7).
+SimBridge has 15 modules and 133 functional requirements. Priority uses MoSCoW (Must, Should, Could); work ships in five phases, R0 to R4: R0 is the proof of concept and carries no requirements of its own, R1 is the first usable version, R2 and R3 follow, and R4 (Android) is built only if time allows (section 7).
 
 ### 3.1 M1 Account and repo setup
 
@@ -405,7 +405,7 @@ SimBridge talks to people through a desktop app and CLI, to agents through MCP, 
 
 | System | Used for | Interface |
 | --- | --- | --- |
-| GitHub | Sign-in, repos, workflow dispatch, artifacts, secrets, usage | REST and GraphQL APIs, OAuth / GitHub App |
+| GitHub | Sign-in, repos, workflow dispatch, artifacts, secrets, usage | REST and GraphQL APIs, GitHub App (device flow) |
 | GitHub Actions runner (macOS) | Build, simulator session, headless test | Workflow YAML; xcodebuild, simctl, flutter, expo CLIs |
 | Apple App Store Connect | Certificates, profiles, devices, TestFlight | ASC REST API with API key (JWT) |
 | serve-sim | Simulator stream and control on the runner | CLI + HTTP/MJPEG on the runner, reached through the tunnel |
@@ -427,6 +427,7 @@ SimBridge talks to people through a desktop app and CLI, to agents through MCP, 
 - All traffic over HTTPS or WSS (TLS 1.2+).
 - The tunnel is outbound from the runner; the user's PC opens no inbound port.
 - Every session has a random access token; the stream and control endpoints reject requests without it.
+- The token never travels in a URL in a released version. The client exchanges it once for a short-lived HttpOnly cookie, which covers HTTP requests and the MJPEG stream; a WebSocket proves itself by sending the token as its first message (SDS 6.3). Only the throwaway R0 spike passes the token as a query string.
 
 ## 5. Non-functional requirements
 
@@ -608,11 +609,11 @@ Eleven use cases cover the main journeys; UC-01 to UC-04 are the R1 core, and UC
 
 ## 7. Release plan and traceability
 
-Work ships in four phases, and each one starts only when the previous gate passes. R1 is the first version people can use.
+Work ships in five phases, R0 to R4, and each one starts only when the previous gate passes (R4 only if time allows). R1 is the first version people can use.
 
 ```mermaid
 flowchart LR
-    R0["<b>R0 Proof of concept</b><br/>Runner boots simulator<br/>serve-sim + tunnel<br/>Measure lag, start time<br/><i>Gate: lag under 400 ms</i>"]
+    R0["<b>R0 Proof of concept</b><br/>Runner boots simulator<br/>serve-sim + tunnel<br/>Measure lag, start time<br/><i>Gate: start under 3 min,<br/>median lag under 400 ms,<br/>MJPEG + WebSocket via tunnel</i>"]
     R1["<b>R1 Cloud simulator</b><br/>GitHub sign-in + repo<br/>Stack detection<br/>Smart build + cache<br/>Mode B + idle shutdown<br/>MCP tools + conditions<br/><i>Gate: 15-min first run</i>"]
     R2["<b>R2 Real iPhone</b><br/>Mode A: go-ios + WDA<br/>Signing via ASC API<br/>Stats + network shaping<br/>Record + replay<br/>Tap by label<br/><i>Gate: device run, 0 min</i>"]
     R3["<b>R3 Automation</b><br/>Mode C: Maestro tests<br/>Conditions in tests<br/>Bug bundle + export<br/>Visual diff + notes<br/><i>Gate: agent self-check</i>"]
@@ -624,14 +625,15 @@ flowchart LR
 
 *Figure 7.1: Release roadmap. Each release adds a run mode; the proof of concept gates everything.*
 
-The proof of concept comes first because stream lag through a tunnel is the one thing that could sink the idea. Every requirement in section 3 carries its release (R1, R2, R3), and section 6 maps each use case to its requirements.
+The proof of concept comes first because stream lag through a tunnel is the one thing that could sink the idea. Every requirement in section 3 carries its release (R1 to R4, or Later), and section 6 maps each use case to its requirements.
 
 ### 7.1 Acceptance per release
 
-- [ ] **R0:** a workflow boots a simulator, starts serve-sim, opens a tunnel and prints the URL; tap lag measured on a Windows PC; the MJPEG stream and a WebSocket log stream confirmed working through the Cloudflare quick tunnel.
+- [ ] **R0:** a workflow boots a simulator, starts serve-sim, opens a tunnel and prints the URL and a per-run access token only in encrypted form (never in plain text); tap lag measured on a Windows PC; the MJPEG stream and a WebSocket log stream confirmed working through the Cloudflare quick tunnel. Gate: under 3 minutes from simulator boot to tunnel ready (boot, install, launch, tunnel; the app build is timed separately because R1 sessions start from a saved build, NFR-PERF-01), and median tap lag under 400 ms (NFR-PERF-02), with the 95th percentile reported for information.
 - [ ] **R1:** UC-01 to UC-04, plus UC-09 on the simulator, pass end to end on one Flutter and one React Native sample app; no runner outlives its idle timeout in 20 test sessions.
 - [ ] **R2:** UC-05, UC-07 and UC-08 pass on a real iPhone with 0 runner minutes after the build.
 - [ ] **R3:** UC-06 passes with conditions set inside test flows; an agent fixes a seeded bug using only the bug bundle.
+- [ ] **R4 (if time allows):** UC-11 passes; full criteria in section 3.12.5.
 
 ### 7.2 Open questions
 
@@ -640,3 +642,6 @@ The proof of concept comes first because stream lag through a tunnel is the one 
 - **Decided, streaming:** WebSockets instead of Server-Sent Events, because quick tunnels do not support SSE (FR-SIM-13).
 - **Decided, sign-in:** GitHub App with device flow and per-repo access, not an OAuth App (FR-SET-01).
 - **Decided, Flutter hot reload:** feasible; FR-SIM-10 becomes Should, starting R3 with a timeboxed spike, with rebuild as the fallback.
+- **Decided (14 Nov 2026), session token transport:** the token is exchanged for a short-lived HttpOnly cookie for HTTP and the MJPEG stream, and sent as the first message on WebSockets, because a browser cannot set an `Authorization` header on an image stream or a WebSocket (section 4.5, SDS 6.3).
+- **Decided (14 Nov 2026), R0 gate:** start time is judged from simulator boot to tunnel ready, with the build timed separately; tap lag is judged on the median.
+- **Open, for R1 planning:** a JavaScript-only change would reuse a saved build that still holds the old JavaScript, because the fingerprint covers only native files and Metro live reload arrives in R2 (FR-SIM-09). Planned fix: include JavaScript sources in the fingerprint and add a cheap "re-bundle only" path that rebuilds just the JavaScript bundle and swaps it into the saved .app. NFR-COST-01 and SDS 3.3 are to be revised then.
