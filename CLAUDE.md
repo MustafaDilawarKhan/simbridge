@@ -100,6 +100,9 @@ Run from the repo root. CI runs the same checks on every pull request.
 - **Pure logic first, I/O at the edges:** stack detection, fingerprinting,
   budget rules and recording format must be testable without GitHub or a device.
 - **Explain changes in simple words** in summaries; the developer is learning.
+- **Keep `docs/PROGRESS.md` current:** update it at every stop point (what is
+  done, what is next, what waits on the developer). Secrets appear there only
+  as names with a placeholder value, never real values.
 - Ask before adding a new dependency, a new workflow permission, or anything
   that costs runner minutes.
 
