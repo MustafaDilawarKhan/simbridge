@@ -5,21 +5,31 @@ on you. Updated at every stop point. Last update: **17 Nov 2026**.
 
 ## Where we are
 
-**Phase R0 (proof of concept): the spike code is written and tested, and is
-moving out of this repo into a separate test repo.**
+**Phase R0 (proof of concept): ready for the first run on a GitHub Mac. It
+waits only for your "run it".**
 
-You decided the product repo should hold only SimBridge's own code, because
-SimBridge will connect to a user's GitHub and work on whichever repo they pick.
-So the test app and the spike code are being moved to a separate test repo,
-and this repo now holds only product code and docs.
+The product repo holds only SimBridge's own code, because SimBridge will
+connect to a user's GitHub and work on whichever repo they pick. The test runs
+against your repo
+[`expo-rsc-movies`](https://github.com/MustafaDilawarKhan/expo-rsc-movies),
+which got exactly one new file: the workflow. Its app code is untouched.
 
-| Stage                            | State                                                          |
-| -------------------------------- | -------------------------------------------------------------- |
-| 0. Read docs, check setup        | Done                                                           |
-| 1. Repository foundation         | Done, merged (PR #14)                                          |
-| 2. R0 spike code                 | Written and tested; moving to a separate test repo             |
-| 3. Run on a Mac, measure, decide | Not started: needs the test repo, the secret and your go-ahead |
-| R1 and later                     | Not started (only after R0 passes)                             |
+| Stage                            | State                                                                    |
+| -------------------------------- | ------------------------------------------------------------------------ |
+| 0. Read docs, check setup        | Done                                                                     |
+| 1. Repository foundation         | Done, merged (PR #14)                                                    |
+| 2. R0 spike code                 | Done: docs merged (PR #16), workflow merged in `expo-rsc-movies` (PR #1) |
+| 3. Run on a Mac, measure, decide | Ready: waiting for your "run it"                                         |
+| R1 and later                     | Not started (only after R0 passes)                                       |
+
+**Where things are:**
+
+- **Workflow:** `expo-rsc-movies` → Actions → **SimBridge R0 spike** (runs only
+  when started by hand).
+- **Spike tools:** branch `archive/r0-spike-code` of this repo, checked out on
+  your PC at `C:\Users\Laptop\Desktop\simbridge-r0-spike`. The runbook is
+  `spikes\r0\README.md` there.
+- **Local test:** passes all 20 checks against a pretend two-tab app.
 
 ## Done so far
 
@@ -79,14 +89,12 @@ and this repo now holds only product code and docs.
 
 ## Secrets
 
-| Name           | Value                           | Used by                             | State                                                                                                                                                                                                        |
-| -------------- | ------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `R0_SPIKE_KEY` | `<dummy: real value not shown>` | R0 spike workflow, in the test repo | Passphrase generated on your PC at `C:\Users\Laptop\.simbridge\r0-spike-key.txt` (only your Windows user can read it). Not yet stored on GitHub: it goes into the test repo's secrets once that repo exists. |
+| Name           | Value                           | Used by                                | State                                                                                                                                                                                                                |
+| -------------- | ------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `R0_SPIKE_KEY` | `<dummy: real value not shown>` | R0 spike workflow in `expo-rsc-movies` | Stored as a secret in `expo-rsc-movies` (17 Nov 2026). The same passphrase is on your PC at `C:\Users\Laptop\.simbridge\r0-spike-key.txt` (only your Windows user can read it); `decrypt-url` and `measure` need it. |
 
-No real secret is stored in any repo or in this file. Copy the passphrase into
-your password manager. Until `R0_SPIKE_KEY` exists in the test repo, the spike
-workflow stops in its first step, so it can never print the tunnel URL in plain
-text.
+No real secret is stored in any repo's files or in this file. Copy the
+passphrase into your password manager.
 
 ## Decisions taken for you (17 Nov 2026)
 
@@ -102,23 +110,24 @@ in CLAUDE.md:
 - **The workflow reads its own dispatch time** (read-only `actions: read`
   permission), so the timing table also shows the wait for a Mac.
 - **Kept the extras:**
-  - a viewer page and an "End session now" button;
-  - an Animate switch for frame-rate tests;
+  - a viewer page (it also shows where you clicked) and an "End session now"
+    button;
   - an H.264 data-rate check;
   - the local dry run.
+- **How `measure` works with `expo-rsc-movies`:** it taps the app's two bottom
+  tabs in turn, because each tap visibly changes the screen, and it scrolls
+  the movie list to measure frame rate. The app has no counter button to use.
+- **The app is built with Bun**, the package manager it already uses, and its
+  "publish a server" setting is switched off for the build only.
 - **serve-sim is pinned to 0.1.49**, because it publishes new versions almost
   daily.
 
 ## What is next
 
-1. **Done:** you chose the test repo
-   [`expo-rsc-movies`](https://github.com/MustafaDilawarKhan/expo-rsc-movies)
-   (public, so Mac minutes are free).
-2. **Me:** add one workflow file to that repo (its app code stays untouched),
-   adapt the spike tools to its screens, and store `R0_SPIKE_KEY` there.
-3. **Me, after your go-ahead:** start the workflow, watch it, fix anything that
-   fails (asking before every new run), and guide you through `decrypt-url` and
-   `measure`.
+1. **Done:** test repo chosen, workflow added, secret stored.
+2. **You:** say "run it".
+3. **Me:** start the workflow, watch it, fix anything that fails (asking
+   before every new run), and guide you through `decrypt-url` and `measure`.
 4. **Me:** write `docs/spikes/R0-results.md` in this repo with the numbers and
    a go / no-go for R1.
 
