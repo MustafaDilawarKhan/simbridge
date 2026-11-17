@@ -5,19 +5,21 @@ on you. Updated at every stop point. Last update: **17 Nov 2026**.
 
 ## Where we are
 
-**Phase R0 (proof of concept), Stage 2 built, waiting for review.**
+**Phase R0 (proof of concept): the spike code is written and tested, and is
+moving out of this repo into a separate test repo.**
 
-All the code for the streaming experiment is written and tested on your PC
-against a pretend simulator. The next step is the first one that uses a GitHub
-Mac: building the iOS app and streaming it. That step waits for you.
+You decided the product repo should hold only SimBridge's own code, because
+SimBridge will connect to a user's GitHub and work on whichever repo they pick.
+So the test app and the spike code are being moved to a separate test repo,
+and this repo now holds only product code and docs.
 
-| Stage                            | State                                           |
-| -------------------------------- | ----------------------------------------------- |
-| 0. Read docs, check setup        | Done                                            |
-| 1. Repository foundation         | Done, merged (PR #14)                           |
-| 2. R0 spike code                 | Done, in review (branch `spike/r0-sim-stream`)  |
-| 3. Run on a Mac, measure, decide | Not started: needs the secret and your go-ahead |
-| R1 and later                     | Not started (only after R0 passes)              |
+| Stage                            | State                                                          |
+| -------------------------------- | -------------------------------------------------------------- |
+| 0. Read docs, check setup        | Done                                                           |
+| 1. Repository foundation         | Done, merged (PR #14)                                          |
+| 2. R0 spike code                 | Written and tested; moving to a separate test repo             |
+| 3. Run on a Mac, measure, decide | Not started: needs the test repo, the secret and your go-ahead |
+| R1 and later                     | Not started (only after R0 passes)                             |
 
 ## Done so far
 
@@ -56,34 +58,35 @@ Mac: building the iOS app and streaming it. That step waits for you.
   - Sign-out deletes the saved tokens. It also offers to open GitHub's page
     where you can revoke access fully, because the app does not carry the
     secret that GitHub's API needs to revoke a token.
-- **serve-sim checked** against its real README and source; the findings are
-  in `spikes/r0/README.md`. The biggest finding: its own log channel uses SSE,
-  which quick tunnels do not carry, so our gateway serves the logs itself.
-- **Sample app** (`spikes/r0/sample-app`): one screen with a big counter
-  button, the time of the last tap, and an Animate switch.
-- **Gateway** (`spikes/r0/gateway`): the only thing the tunnel can reach.
-  - It checks the token and proxies the video and taps to serve-sim.
-  - It serves the app's logs over a WebSocket and a small viewer page.
-- **Workflow** (`.github/workflows/r0-spike.yml`):
-  - builds the app (Release, no Metro), then boots the simulator, installs and
-    launches the app, and opens the tunnel;
-  - prints the URL only encrypted, plus a timing table with the 3-minute gate;
-  - ends by itself.
-- **Tools for your PC** (`spikes/r0/tools`):
-  - `decrypt-url` shows the viewer link;
-  - `measure` measures tap lag, frame rate and the log stream;
-  - `dry-run` tests everything locally against a pretend simulator. It passes
-    all 19 checks.
+- **serve-sim checked** against its real README and source; the findings stay
+  in this repo at `docs/spikes/serve-sim-findings.md`. The biggest finding: its
+  own log channel uses SSE, which quick tunnels do not carry, so our gateway
+  serves the logs itself.
+- **Spike code written and tested.** It is no longer in this repo; it is saved
+  on the branch `archive/r0-spike-code` until the test repo exists:
+  - **Sample app:** one screen with a big counter button, the time of the last
+    tap, and an Animate switch.
+  - **Gateway:** the only thing the tunnel can reach. It checks the token,
+    passes the video and taps to serve-sim, and serves the app's logs over a
+    WebSocket plus a small viewer page.
+  - **Workflow:** builds the app (Release, no Metro), boots the simulator,
+    installs and launches the app, opens the tunnel, prints the URL only
+    encrypted plus a timing table, and ends by itself.
+  - **Tools for your PC:** `decrypt-url`, `measure`, and a `dry-run` against a
+    pretend simulator, which passes all 19 checks.
+- **Repo cleaned:** the demo app, the spike workflow and the spike settings
+  were removed from `simbridge`.
 
 ## Secrets
 
-| Name           | Value                      | Used by           | State                                                                                  |
-| -------------- | -------------------------- | ----------------- | -------------------------------------------------------------------------------------- |
-| `R0_SPIKE_KEY` | `<dummy: not created yet>` | R0 spike workflow | Placeholder. Create it when you want to run the spike (`spikes/r0/README.md`, step 1). |
+| Name           | Value                           | Used by                             | State                                                                                                                                                                                                        |
+| -------------- | ------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `R0_SPIKE_KEY` | `<dummy: real value not shown>` | R0 spike workflow, in the test repo | Passphrase generated on your PC at `C:\Users\Laptop\.simbridge\r0-spike-key.txt` (only your Windows user can read it). Not yet stored on GitHub: it goes into the test repo's secrets once that repo exists. |
 
-No real secret is stored in the repo or in this file. Until `R0_SPIKE_KEY`
-exists, the spike workflow stops in its first step, so it can never print the
-tunnel URL in plain text.
+No real secret is stored in any repo or in this file. Copy the passphrase into
+your password manager. Until `R0_SPIKE_KEY` exists in the test repo, the spike
+workflow stops in its first step, so it can never print the tunnel URL in plain
+text.
 
 ## Decisions taken for you (17 Nov 2026)
 
@@ -108,13 +111,14 @@ in CLAUDE.md:
 
 ## What is next
 
-1. **You:** review the Stage 2 pull request.
-2. **You, when ready:** create `R0_SPIKE_KEY` (step 1 of the runbook).
+1. **You:** choose the test repo, either a new public sample repo or one of
+   your own app repos.
+2. **Me:** move the spike code into that repo and store `R0_SPIKE_KEY` there.
 3. **Me, after your go-ahead:** start the workflow, watch it, fix anything that
    fails (asking before every new run), and guide you through `decrypt-url` and
    `measure`.
-4. **Me:** write `docs/spikes/R0-results.md` with the numbers and a go / no-go
-   for R1.
+4. **Me:** write `docs/spikes/R0-results.md` in this repo with the numbers and
+   a go / no-go for R1.
 
 ## Known issues on your PC
 

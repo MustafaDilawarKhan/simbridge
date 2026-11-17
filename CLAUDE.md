@@ -18,6 +18,10 @@ streamed to Windows with usable lag, through a Cloudflare quick tunnel.
   sessions start from a saved build. The 95th percentile lag is reported for
   information only.
 - The spike prints the tunnel URL and a per-run token only in encrypted form.
+- **This repo holds only product code and docs.** The R0 spike (test app,
+  workflow, gateway, measure tools) lives in a separate test repo, the way real
+  users will point SimBridge at their own repos. The spike code written so far
+  is kept on the branch `archive/r0-spike-code`.
 - Do NOT build R1 features (CLI, MCP server, desktop app) until the gate passes.
 - Update this section whenever the phase changes.
 
@@ -140,7 +144,8 @@ Add one line per decision: date, decision, why.
 - 2026-11-17: Sign-in opens the browser at GitHub's device page; sign-out deletes local tokens and offers GitHub's revoke page, since revoking via API needs a client secret we never ship (FR-SET-08, FR-SET-09, ADR 0009). Human-only, no MCP tool.
 - 2026-11-17: serve-sim pinned to an exact version (0.1.49): it is 0.x and publishes almost daily. Its taps are a WebSocket (`/helper/<udid>/ws`, byte 0x03 + JSON), not `POST /input`; its own logs use SSE, so the gateway serves `/ws/logs` itself.
 - 2026-11-17: R0 spike: boot the simulator after the build so boot to tunnel ready is measured like an R1 session; `actions: read` permission only to read the dispatch time; spike deps `ws` (gateway) and `jpeg-js` (measure); viewer page, `/shutdown`, Animate switch, H.264 data-rate check and a local fake simulator added.
-- 2026-11-17: The `R0_SPIKE_KEY` secret is not created yet (placeholder name only). The spike workflow stops in its first step if it is missing, so the tunnel URL can never be printed in plain text.
+- 2026-11-17: The R0 passphrase was generated on the developer's PC at `%USERPROFILE%\.simbridge\r0-spike-key.txt` (owner-only, never committed or displayed). It becomes the `R0_SPIKE_KEY` secret of the test repo that runs the spike; until then the spike workflow stops in its first step, so the tunnel URL can never be printed in plain text.
+- 2026-11-17: No demo or spike code in the product repo. The test app and R0 spike move to a separate public test repo (public keeps macOS minutes free; GitHub terms require a workflow to build only its own repo). Spike code archived on `archive/r0-spike-code`; serve-sim findings kept in `docs/spikes/serve-sim-findings.md`.
 
 ## Open items
 
