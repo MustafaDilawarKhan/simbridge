@@ -1,12 +1,13 @@
 # SimBridge progress
 
 A plain-words record of what has been done, what is next, and what is waiting
-on you. Updated at every stop point. Last update: **17 Nov 2026**.
+on you. Updated at every stop point. Last update: **18 Nov 2026**.
 
 ## Where we are
 
-**Phase R0 (proof of concept): ready for the first run on a GitHub Mac. It
-waits only for your "run it".**
+**Phase R0 (proof of concept): measuring. Five runs done; the streaming works,
+the numbers are not good enough yet. Run 6 (with H.264 video) waits for your
+"run it".** Full results: [docs/spikes/R0-results.md](spikes/R0-results.md).
 
 The product repo holds only SimBridge's own code, because SimBridge will
 connect to a user's GitHub and work on whichever repo they pick. The test runs
@@ -19,7 +20,7 @@ which got exactly one new file: the workflow. Its app code is untouched.
 | 0. Read docs, check setup        | Done                                                                     |
 | 1. Repository foundation         | Done, merged (PR #14)                                                    |
 | 2. R0 spike code                 | Done: docs merged (PR #16), workflow merged in `expo-rsc-movies` (PR #1) |
-| 3. Run on a Mac, measure, decide | Ready: waiting for your "run it"                                         |
+| 3. Run on a Mac, measure, decide | In progress: runs 1 to 5 done, run 6 next                                |
 | R1 and later                     | Not started (only after R0 passes)                                       |
 
 **Where things are:**
@@ -87,6 +88,23 @@ which got exactly one new file: the workflow. Its app code is untouched.
 - **Repo cleaned:** the demo app, the spike workflow and the spike settings
   were removed from `simbridge`.
 
+### Stage 3: runs on a GitHub Mac (17 and 18 Nov 2026)
+
+- **Run 1:** built and launched the app, but the Mac could not reach its own
+  tunnel. Fixed: the check now asks Cloudflare's DNS directly.
+- **Run 2:** the session was live for 15 minutes, but my watcher froze and
+  nobody connected. Start time: 298 s.
+- **Runs 3 and 4:** GitHub had no free Mac and cancelled them after 15
+  minutes. No minutes were used.
+- **Run 5:** your real movies app streamed live to the PC, taps reached it,
+  and the log stream worked. Start time: 252 s (the gate is 180 s). The video
+  reached only about 5 frames per second, because full-size MJPEG frames are
+  too big for a 20 Mbit/s line.
+- **Decision:** H.264 is the main video stream from now on (ADR 0010). It
+  needs about 6 times less data. The spike tools were updated: the viewer
+  plays H.264, `measure` times taps over H.264, and a `screenshot` tool shows
+  the live screen.
+
 ## Secrets
 
 | Name           | Value                           | Used by                                | State                                                                                                                                                                                                                |
@@ -124,12 +142,14 @@ in CLAUDE.md:
 
 ## What is next
 
-1. **Done:** test repo chosen, workflow added, secret stored.
-2. **You:** say "run it".
-3. **Me:** start the workflow, watch it, fix anything that fails (asking
-   before every new run), and guide you through `decrypt-url` and `measure`.
-4. **Me:** write `docs/spikes/R0-results.md` in this repo with the numbers and
-   a go / no-go for R1.
+1. **You:** say "run it" for run 6 (30 minutes, H.264). Stay near the PC for
+   about 20 to 50 minutes after that.
+2. **Me:** take a screenshot of the live app, pick two tap points that change
+   the screen, run `measure`, and send you the viewer steps.
+3. **Me:** finish `docs/spikes/R0-results.md` with a go / no-go for R1.
+4. **You:** decide how the start-time gate is counted (from simulator boot,
+   or from session start), because a fresh simulator's first boot alone takes
+   about 165 seconds.
 
 ## Known issues on your PC
 

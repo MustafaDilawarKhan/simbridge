@@ -11,8 +11,9 @@ runs on a USB iPhone; AI agents drive everything through an MCP server.
 streamed to Windows with usable lag, through a Cloudflare quick tunnel.
 
 - Gate to pass before R1: under 3 min to a usable simulator, under 400 ms median
-  tap lag, and the MJPEG stream plus a WebSocket log stream both work through
-  the tunnel.
+  tap lag, and the video stream (H.264, ADR 0010) plus a WebSocket log stream
+  both work through the tunnel.
+- Results so far are in `docs/spikes/R0-results.md` (runs 1 to 5; run 6 next).
 - How the gate is measured: the 3 min runs from simulator boot to tunnel ready
   (boot, install, launch, tunnel). The app build is timed separately, because R1
   sessions start from a saved build. The 95th percentile lag is reported for
@@ -52,7 +53,9 @@ streamed to Windows with usable lag, through a Cloudflare quick tunnel.
 - **Tunnel:** Cloudflare quick tunnel only, behind a `TunnelProvider` interface
   (SDS 3.5) so Tailscale can be added later without touching other code.
 - **Live streams use WebSockets, never SSE:** quick tunnels do not support
-  Server-Sent Events (FR-SIM-13). MJPEG through the tunnel is checked in R0.
+  Server-Sent Events (FR-SIM-13).
+- **Video is H.264, MJPEG only as fallback** (ADR 0010): full-size MJPEG needs
+  about 44 Mbit/s for 15 fps; H.264 is capped at 8 Mbit/s and decoded with WebCodecs.
 - **Session token:** never in a URL. HTTP and the MJPEG stream use a short-lived
   HttpOnly cookie from `POST /auth`; WebSockets (`/ws/logs`, `/ws/stats`) send the
   token as their first message (SDS 6.3, ADR 0008). Only the R0 spike uses `?t=`.
@@ -151,11 +154,18 @@ Add one line per decision: date, decision, why.
 - 2026-11-17: The R0 passphrase was generated on the developer's PC at `%USERPROFILE%\.simbridge\r0-spike-key.txt` (owner-only, never committed or displayed) at the developer's request, and stored as the `R0_SPIKE_KEY` secret of `expo-rsc-movies`. Never read or print that file; pipe it.
 - 2026-11-17: No demo or spike code in the product repo. The test app and R0 spike move to a separate public test repo (public keeps macOS minutes free; GitHub terms require a workflow to build only its own repo). Spike code archived on `archive/r0-spike-code`; serve-sim findings kept in `docs/spikes/serve-sim-findings.md`.
 - 2026-11-17: Test repo for R0 is `MustafaDilawarKhan/expo-rsc-movies` (public, Expo SDK 54, Bun, two native tabs, movie data from a hosted server). Only a workflow file is added there. `measure` taps the two tabs alternately and scrolls for frame rate, since the app has no counter button. Bun 1.4.4 via oven-sh/setup-bun v2.2.0; `EXPO_UNSTABLE_DEPLOY_SERVER=0` during the build so it never tries to publish a server.
+- 2026-11-18: The spike checks its own tunnel through 1.1.1.1 with `curl --resolve`, because macOS cached a "no such name" answer for the new tunnel and run 1 failed.
+- 2026-11-18: H.264 is the main video stream, MJPEG the fallback; serve-sim's H.264 capped at 8 Mbit/s; NFR-PERF-04 judged on H.264 on a 20 Mbit/s line (ADR 0010). Run 5: full-size MJPEG reached only 5 fps on the developer's 20 Mbit/s line.
+- 2026-11-18: R1 treats "no GitHub Mac available" as normal: show the wait apart from start time and retry when GitHub cancels for capacity (runs 3 and 4 never got a Mac).
 
 ## Open items
 
 Known gaps with no action yet. Remove a line when it is resolved.
 
+- **R0 start time:** boot to tunnel ready took 252 to 298 s (gate 180 s); a
+  fresh simulator's first boot alone takes about 165 s. After run 6, decide
+  whether the gate counts from boot start or from session start (R1 can boot
+  while the saved build downloads, FR-SIM-02). Details in `docs/spikes/R0-results.md`.
 - **R1 planning, stale JavaScript:** a JS-only change would reuse a saved build
   that still holds the old JavaScript, because the fingerprint covers only native
   files and Metro live reload arrives in R2 (FR-SIM-09). Plan: include JS sources
