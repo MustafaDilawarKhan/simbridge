@@ -18,6 +18,14 @@ streamed to Windows with usable lag, through a Cloudflare quick tunnel.
   sessions start from a saved build. The 95th percentile lag is reported for
   information only.
 - The spike prints the tunnel URL and a per-run token only in encrypted form.
+- **This repo holds only product code and docs.** The R0 spike runs against
+  the test repo `MustafaDilawarKhan/expo-rsc-movies` (public fork of Evan
+  Bacon's Expo RSC movies app), the way real users will point SimBridge at
+  their own repos. That repo gets only one added file, the workflow
+  `.github/workflows/simbridge-r0.yml`; its app code is never changed. The
+  workflow fetches the spike tools (gateway, runner scripts) from this repo's
+  branch `archive/r0-spike-code`, where the PC tools (`decrypt-url`,
+  `measure`, `dry-run`) also live.
 - Do NOT build R1 features (CLI, MCP server, desktop app) until the gate passes.
 - Update this section whenever the phase changes.
 
@@ -100,6 +108,9 @@ Run from the repo root. CI runs the same checks on every pull request.
 - **Pure logic first, I/O at the edges:** stack detection, fingerprinting,
   budget rules and recording format must be testable without GitHub or a device.
 - **Explain changes in simple words** in summaries; the developer is learning.
+- **Keep `docs/PROGRESS.md` current:** update it at every stop point (what is
+  done, what is next, what waits on the developer). Secrets appear there only
+  as names with a placeholder value, never real values.
 - Ask before adding a new dependency, a new workflow permission, or anything
   that costs runner minutes.
 
@@ -134,6 +145,12 @@ Add one line per decision: date, decision, why.
 - 2026-11-14: Node.js 20 is the minimum everywhere; CI pins 20.
 - 2026-11-14: TypeScript 6 and Vitest 4, not the newest majors: typescript-eslint does not support TypeScript 7 yet, and Vitest 5 needs Node 22.
 - 2026-11-14: Licence is MIT.
+- 2026-11-17: Sign-in opens the browser at GitHub's device page; sign-out deletes local tokens and offers GitHub's revoke page, since revoking via API needs a client secret we never ship (FR-SET-08, FR-SET-09, ADR 0009). Human-only, no MCP tool.
+- 2026-11-17: serve-sim pinned to an exact version (0.1.49): it is 0.x and publishes almost daily. Its taps are a WebSocket (`/helper/<udid>/ws`, byte 0x03 + JSON), not `POST /input`; its own logs use SSE, so the gateway serves `/ws/logs` itself.
+- 2026-11-17: R0 spike: boot the simulator after the build so boot to tunnel ready is measured like an R1 session; `actions: read` permission only to read the dispatch time; spike deps `ws` (gateway) and `jpeg-js` (measure); viewer page, `/shutdown`, Animate switch, H.264 data-rate check and a local fake simulator added.
+- 2026-11-17: The R0 passphrase was generated on the developer's PC at `%USERPROFILE%\.simbridge\r0-spike-key.txt` (owner-only, never committed or displayed). It becomes the `R0_SPIKE_KEY` secret of the test repo that runs the spike; until then the spike workflow stops in its first step, so the tunnel URL can never be printed in plain text.
+- 2026-11-17: No demo or spike code in the product repo. The test app and R0 spike move to a separate public test repo (public keeps macOS minutes free; GitHub terms require a workflow to build only its own repo). Spike code archived on `archive/r0-spike-code`; serve-sim findings kept in `docs/spikes/serve-sim-findings.md`.
+- 2026-11-17: Test repo for R0 is `MustafaDilawarKhan/expo-rsc-movies` (public, Expo SDK 54, Bun, two native tabs, movie data from a hosted server). Only a workflow file is added there. `measure` taps the two tabs alternately and scrolls for frame rate, since the app has no counter button. Bun 1.4.4 via oven-sh/setup-bun v2.2.0; `EXPO_UNSTABLE_DEPLOY_SERVER=0` during the build so it never tries to publish a server.
 
 ## Open items
 
@@ -145,7 +162,8 @@ Known gaps with no action yet. Remove a line when it is resolved.
   in the fingerprint, plus a cheap "re-bundle only" path that rebuilds just the JS
   bundle and swaps it into the saved .app. Revise NFR-COST-01 and SDS 3.3 then.
 - **R1, session cookie details:** lifetime, `SameSite` value and WebSocket auth
-  timeout (ADR 0008).
+  timeout (ADR 0008). serve-sim already implements token → `/auth` → HttpOnly
+  `SameSite=Lax` cookie; check whether the session agent can reuse it.
 - **Node.js version:** Node 20 reached end of life in April 2026 and new tool
   majors (Vitest 5) already need Node 22. Decide before R1 whether to move the
   minimum to Node 22; that would also unlock Vitest 5.

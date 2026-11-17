@@ -19,14 +19,14 @@ with green CI.
 
 Use `<type>/<short-description>` in lower case with hyphens.
 
-| Type     | Use it for                              | Example                  |
-| -------- | --------------------------------------- | ------------------------ |
-| `feat/`  | A new feature or module                 | `feat/c2-stack-detector` |
-| `fix/`   | A bug fix                               | `fix/idle-timer-reset`   |
-| `docs/`  | Documentation only                      | `docs/srs-r1-gate`       |
-| `chore/` | Tooling, CI, dependencies               | `chore/foundation`       |
-| `test/`  | Tests only                              | `test/fingerprint-edge`  |
-| `spike/` | Throwaway experiments (under `spikes/`) | `spike/r0-sim-stream`    |
+| Type     | Use it for                                                     | Example                  |
+| -------- | -------------------------------------------------------------- | ------------------------ |
+| `feat/`  | A new feature or module                                        | `feat/c2-stack-detector` |
+| `fix/`   | A bug fix                                                      | `fix/idle-timer-reset`   |
+| `docs/`  | Documentation only                                             | `docs/srs-r1-gate`       |
+| `chore/` | Tooling, CI, dependencies                                      | `chore/foundation`       |
+| `test/`  | Tests only                                                     | `test/fingerprint-edge`  |
+| `spike/` | Throwaway experiments (kept in a separate test repo, not here) | `spike/r0-sim-stream`    |
 
 ## Commit messages
 

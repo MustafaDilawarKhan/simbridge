@@ -1,6 +1,6 @@
 # SRS: iOS Agent Build Tool
 
-Version 1.1 · 14 November 2026 · Author: Furqan
+Version 1.2 · 17 November 2026 · Author: Furqan
 
 ## 1. Introduction
 
@@ -122,7 +122,7 @@ People and agents talk only to SimBridge; SimBridge drives GitHub, the runner, A
 
 ## 3. Functional requirements
 
-SimBridge has 15 modules and 133 functional requirements. Priority uses MoSCoW (Must, Should, Could); work ships in five phases, R0 to R4: R0 is the proof of concept and carries no requirements of its own, R1 is the first usable version, R2 and R3 follow, and R4 (Android) is built only if time allows (section 7).
+SimBridge has 15 modules and 135 functional requirements. Priority uses MoSCoW (Must, Should, Could); work ships in five phases, R0 to R4: R0 is the proof of concept and carries no requirements of its own, R1 is the first usable version, R2 and R3 follow, and R4 (Android) is built only if time allows (section 7).
 
 ### 3.1 M1 Account and repo setup
 
@@ -135,6 +135,8 @@ SimBridge has 15 modules and 133 functional requirements. Priority uses MoSCoW (
 | FR-SET-05 | The system shall guide the user through signing setup and store certificates and the ASC API key as GitHub repository secrets. | Must | R2 |
 | FR-SET-06 | The system shall warn when a repo is private and show its expected macOS minute cost. | Should | R1 |
 | FR-SET-07 | The system shall support several linked repos and let the user switch between them. | Should | R2 |
+| FR-SET-08 | During sign-in the system shall open the default browser at GitHub's device sign-in page and show the one-time code (and copy it to the clipboard); if no browser can be opened, it shall show the link to open by hand. | Must | R1 |
+| FR-SET-09 | The user shall be able to sign out from the UI and the CLI (`simbridge logout`). Sign-out shall delete the stored GitHub tokens from the Windows Credential Manager, offer to end any live session first, and offer to open GitHub's authorizations page so the user can also revoke SimBridge's access there. Agents cannot sign the user in or out. | Must | R1 |
 
 ### 3.2 M2 Stack detection
 
@@ -391,7 +393,7 @@ SimBridge talks to people through a desktop app and CLI, to agents through MCP, 
 
 - **Desktop app (Windows):** a main window with the device screen on the left, and tabs on the right for Stats, Logs, Replay and Settings. A top bar shows repo, stack, mode, session timer and minutes used.
 - **Setup wizard:** sign in to GitHub, pick repo, confirm stack, review workflow pull request, optional signing setup, connect agents.
-- **CLI:** `simbridge login`, `init`, `build`, `up`, `down`, `status`, `logs`, `record`, `replay`, `test`. Every command takes `--json` for scripts.
+- **CLI:** `simbridge login`, `logout`, `init`, `build`, `up`, `down`, `status`, `logs`, `record`, `replay`, `test`. Every command takes `--json` for scripts.
 - **Accessibility:** keyboard access to all actions; text contrast of at least 4.5:1; screen-reader labels on controls.
 
 ### 4.2 Agent interface (MCP)
@@ -505,7 +507,7 @@ Eleven use cases cover the main journeys; UC-01 to UC-04 are the R1 core, and UC
 
 | ID | Use case | Primary actor | Requirements |
 | --- | --- | --- | --- |
-| UC-01 | First-time setup | Windows developer | FR-SET-01 to 04, FR-STK-01 to 05 |
+| UC-01 | First-time setup | Windows developer | FR-SET-01 to 04, FR-SET-08, FR-SET-09, FR-STK-01 to 05 |
 | UC-02 | Build the app | Developer or agent | FR-BLD-01 to 09 |
 | UC-03 | Run in the cloud simulator | Developer or agent | FR-SIM-01 to 15, FR-UI-01 to 02 |
 | UC-04 | Agent verifies its own change | AI agent | FR-AGT-01 to 10 |
@@ -521,13 +523,14 @@ Eleven use cases cover the main journeys; UC-01 to UC-04 are the R1 core, and UC
 
 - **Precondition:** SimBridge is installed; the user has a GitHub account.
 - **Main flow:**
-  1. The user signs in with GitHub.
+  1. The user signs in with GitHub: SimBridge opens the browser at GitHub's sign-in page and shows a short code; the user enters it and approves access to the repos they choose.
   2. The user picks a repo; the system detects the stack and shows it.
   3. The user confirms or changes the stack.
   4. The system opens a pull request adding the workflow files; the user merges it.
   5. The system offers to connect agents and writes their MCP config.
 - **Alternative:** no ios folder in an Expo project; the system explains that prebuild will create it during the build.
 - **Postcondition:** the repo is linked and ready to build.
+- **Sign-out:** at any time the user can sign out (FR-SET-09); SimBridge forgets the GitHub tokens and offers to open GitHub's page where access can also be revoked.
 
 ### UC-02 Build the app
 
@@ -642,6 +645,7 @@ The proof of concept comes first because stream lag through a tunnel is the one 
 - **Decided, streaming:** WebSockets instead of Server-Sent Events, because quick tunnels do not support SSE (FR-SIM-13).
 - **Decided, sign-in:** GitHub App with device flow and per-repo access, not an OAuth App (FR-SET-01).
 - **Decided, Flutter hot reload:** feasible; FR-SIM-10 becomes Should, starting R3 with a timeboxed spike, with rebuild as the fallback.
+- **Decided (17 Nov 2026), sign-in and sign-out:** sign-in opens the browser at GitHub's device page (FR-SET-08); sign-out deletes the local tokens and offers GitHub's revoke page, because revoking a token through GitHub's API needs a client secret that SimBridge does not ship (FR-SET-09, ADR 0009).
 - **Decided (14 Nov 2026), session token transport:** the token is exchanged for a short-lived HttpOnly cookie for HTTP and the MJPEG stream, and sent as the first message on WebSockets, because a browser cannot set an `Authorization` header on an image stream or a WebSocket (section 4.5, SDS 6.3).
 - **Decided (14 Nov 2026), R0 gate:** start time is judged from simulator boot to tunnel ready, with the build timed separately; tap lag is judged on the median.
 - **Open, for R1 planning:** a JavaScript-only change would reuse a saved build that still holds the old JavaScript, because the fingerprint covers only native files and Metro live reload arrives in R2 (FR-SIM-09). Planned fix: include JavaScript sources in the fingerprint and add a cheap "re-bundle only" path that rebuilds just the JavaScript bundle and swaps it into the saved .app. NFR-COST-01 and SDS 3.3 are to be revised then.

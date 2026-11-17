@@ -1,6 +1,6 @@
 # SDS: iOS Agent Build Tool
 
-Version 1.1 · 14 November 2026 · Author: Furqan
+Version 1.2 · 17 November 2026 · Author: Furqan
 
 ## 1. Introduction
 
@@ -94,13 +94,13 @@ The client has 13 components; four of them (C5, C6, C7, and C13 for Android) are
 
 ### 3.1 C1 Auth and Repo Manager
 
-- **Responsibility:** GitHub sign-in, repo list, linking a repo, installing workflow files by pull request.
+- **Responsibility:** GitHub sign-in and sign-out, repo list, linking a repo, installing workflow files by pull request.
 
-- **Interfaces:** `signIn()`, `listRepos(query)`, `linkRepo(owner, name)`, `installWorkflows(repo)` returns PR URL.
+- **Interfaces:** `signIn()`, `signOut({ endSessions, openRevokePage })`, `currentUser()`, `listRepos(query)`, `linkRepo(owner, name)`, `installWorkflows(repo)` returns PR URL.
 
 - **Technology:** Octokit (GitHub REST/GraphQL); GitHub App device flow; tokens in Windows Credential Manager via keytar.
 
-- **SRS:** FR-SET-01 to 07.
+- **SRS:** FR-SET-01 to 09.
 
 GitHub App permissions requested (repository level, only on repos the user selects at install):
 
@@ -115,6 +115,21 @@ GitHub App permissions requested (repository level, only on repos the user selec
 | Metadata      | Read           | Required by GitHub for every app                              |
 
 The app uses the device flow (the user enters a code on github.com), so no client secret is shipped in SimBridge. User tokens expire and are refreshed automatically.
+
+**Sign-in (FR-SET-01, 08):**
+
+1. `signIn()` asks GitHub for a device code and a one-time user code.
+2. It opens the default browser at `https://github.com/login/device`, shows the user code and copies it to the clipboard. If no browser opens, the UI and CLI print the link instead.
+3. It polls GitHub at the interval GitHub gives until the user approves, then stores the access and refresh tokens in the Windows Credential Manager and reads the user's login with `currentUser()`.
+4. If the GitHub App is not yet installed on any repo, it opens the App's install page so the user can pick repos.
+
+**Sign-out (FR-SET-09, ADR 0009):**
+
+1. If a session is live, `signOut()` offers to end it first (otherwise it stops getting heartbeats and ends at its idle timeout).
+2. It deletes the access and refresh tokens from the Windows Credential Manager and clears account-bound caches (the repo list and current user). Local recordings and settings stay.
+3. It offers to open `https://github.com/settings/apps/authorizations`, where the user can revoke SimBridge's access on GitHub as well. SimBridge cannot revoke the token itself: GitHub's revoke endpoint needs the App's client secret, which is never shipped.
+
+Sign-in and sign-out are human-only: no MCP tool exposes them.
 
 ### 3.2 C2 Stack Detector
 
@@ -619,7 +634,8 @@ Every result uses one envelope:
 
 | Command                                         | What it does                                                   |
 |-------------------------------------------------|----------------------------------------------------------------|
-| simbridge login                                 | GitHub sign-in                                                 |
+| simbridge login                                 | GitHub sign-in: opens the browser and shows the one-time code  |
+| simbridge logout [--revoke]                     | Sign out: forget the tokens; `--revoke` opens GitHub's revoke page |
 | simbridge init                                  | Link repo, detect stack, open workflow PR, write agent configs |
 | simbridge build [--force]                     | Fingerprint, reuse or build                                    |
 | simbridge up [--mode auto, device, cloud-sim] | Start or rejoin a session and open the viewer                  |
@@ -813,7 +829,7 @@ Every SRS module maps to at least one component; no component exists without a r
 
 | SRS module                | Requirements    | Components                                                       |
 |---------------------------|-----------------|------------------------------------------------------------------|
-| M1 Account and repo setup | FR-SET-01 to 07 | C1 Auth and Repo Manager                                         |
+| M1 Account and repo setup | FR-SET-01 to 09 | C1 Auth and Repo Manager                                         |
 | M2 Stack detection        | FR-STK-01 to 05 | C2 Stack Detector                                                |
 | M3 Smart build            | FR-BLD-01 to 09 | C3 Build Orchestrator, simbridge-build.yml                       |
 | M4 Run mode selection     | FR-MOD-01 to 04 | C4 Session Manager, C12 Budget Guard                             |
