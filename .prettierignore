@@ -11,3 +11,6 @@ docs/SDS.md
 
 # Prompts are kept word for word as they were used.
 docs/prompts/
+
+# The Expo sample app keeps the template's own style; it is throwaway R0 code.
+spikes/r0/sample-app/
