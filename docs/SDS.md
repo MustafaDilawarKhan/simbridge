@@ -655,7 +655,8 @@ Served by the session agent behind the tunnel. Every request must prove it holds
 | Method and path            | Purpose                                                                                                  |
 |----------------------------|----------------------------------------------------------------------------------------------------------|
 | POST /auth                 | Exchanges the session token for the session cookie (see "Authentication" below)                          |
-| GET /stream                | MJPEG video proxied from serve-sim; if the tunnel buffers it, frames move to a WebSocket (checked in R0) |
+| GET /stream                | H.264 video proxied from serve-sim's `/stream.avcc`, capped at 8 Mbit/s, decoded with WebCodecs (ADR 0010) |
+| GET /stream.mjpeg          | MJPEG fallback for clients without an H.264 decoder (about 6 times more data)                            |
 | POST /input                | tap, swipe, type, button (forwarded to serve-sim)                                                        |
 | GET /screenshot            | Current PNG                                                                                              |
 | GET /a11y                  | Accessibility tree                                                                                       |
@@ -668,9 +669,9 @@ Served by the session agent behind the tunnel. Every request must prove it holds
 
 #### Authentication
 
-A browser cannot attach an `Authorization` header to an `<img>` MJPEG stream or to a WebSocket, so a header-only rule would lock out the desktop UI. The session token is therefore presented in two ways (ADR 0008):
+A browser cannot attach an `Authorization` header to an `<img>` MJPEG stream (the fallback) or to a WebSocket, so a header-only rule would lock out the desktop UI. The session token is therefore presented in two ways (ADR 0008):
 
-- **HTTP and the MJPEG stream:** the client calls `POST /auth` once with the header `Authorization: Bearer <session token>`. The agent answers with a short-lived cookie marked `HttpOnly` and `Secure`. Every other HTTP endpoint, including `GET /stream`, accepts only that cookie. Each `POST /heartbeat` renews it, so the cookie dies soon after the client goes away.
+- **HTTP and the video streams:** the client calls `POST /auth` once with the header `Authorization: Bearer <session token>`. The agent answers with a short-lived cookie marked `HttpOnly` and `Secure`. Every other HTTP endpoint, including `GET /stream`, accepts only that cookie. Each `POST /heartbeat` renews it, so the cookie dies soon after the client goes away.
 
 - **WebSockets (`/ws/logs`, `/ws/stats`):** the first message from the client must be `{ "type": "auth", "token": "<session token>" }`. The agent sends no data before that message, and closes the socket if the message is wrong or does not arrive within a few seconds.
 

@@ -19,7 +19,7 @@ The gate to pass before R1 starts:
 
 - under 3 minutes from simulator boot to a usable simulator,
 - under 400 ms median tap lag,
-- the MJPEG video stream and a WebSocket log stream both work through the tunnel.
+- the video stream (H.264) and a WebSocket log stream both work through the tunnel.
 
 | Phase | What it adds                                                 | State       |
 | ----- | ------------------------------------------------------------ | ----------- |

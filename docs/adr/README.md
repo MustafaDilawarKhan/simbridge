@@ -17,6 +17,7 @@ reasoning.
 | 0007 | [Flutter hot reload as an R3 timeboxed spike](0007-flutter-hot-reload-r3-spike.md)           | Accepted |
 | 0008 | [Session token as a cookie and a first WebSocket message](0008-session-token-transport.md)   | Accepted |
 | 0009 | [Sign-out forgets local tokens and offers GitHub's revoke page](0009-sign-out-and-revoke.md) | Accepted |
+| 0010 | [H.264 is the main video stream, MJPEG the fallback](0010-h264-video-stream.md)              | Accepted |
 
 ## Adding a record
 

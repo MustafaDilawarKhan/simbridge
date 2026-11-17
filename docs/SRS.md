@@ -44,7 +44,8 @@ Out of scope:
 | serve-sim | An open-source tool that streams and controls the iOS Simulator in a browser |
 | Maestro | An open-source mobile UI test runner that uses YAML test flows |
 | Metro | The React Native JavaScript bundler that enables live reload |
-| MJPEG | Motion JPEG: a simple video stream format browsers can show |
+| MJPEG | Motion JPEG: a simple video stream format browsers can show; every frame is a full picture, so it needs much more data than H.264 |
+| H.264 | A video format that sends only what changes between frames; the main simulator stream (ADR 0010) |
 | ASC API | App Store Connect API: Apple's API for certificates, profiles and TestFlight |
 
 ### 1.4 References
@@ -410,7 +411,7 @@ SimBridge talks to people through a desktop app and CLI, to agents through MCP, 
 | GitHub | Sign-in, repos, workflow dispatch, artifacts, secrets, usage | REST and GraphQL APIs, GitHub App (device flow) |
 | GitHub Actions runner (macOS) | Build, simulator session, headless test | Workflow YAML; xcodebuild, simctl, flutter, expo CLIs |
 | Apple App Store Connect | Certificates, profiles, devices, TestFlight | ASC REST API with API key (JWT) |
-| serve-sim | Simulator stream and control on the runner | CLI + HTTP/MJPEG on the runner, reached through the tunnel |
+| serve-sim | Simulator stream and control on the runner | CLI + HTTP (H.264, MJPEG fallback) and WebSocket input on the runner, reached through the tunnel |
 | go-ios + WebDriverAgent | Install, stream, control, stats on a real iPhone | go-ios CLI (JSON output); WDA HTTP API |
 | Maestro | Headless test flows | Maestro CLI and YAML flows |
 | Tunnel (Cloudflare quick tunnel) | Runner to PC connection | cloudflared quick tunnel, outbound from the runner; HTTPS and WebSockets only (quick tunnels do not support SSE) |
@@ -429,7 +430,7 @@ SimBridge talks to people through a desktop app and CLI, to agents through MCP, 
 - All traffic over HTTPS or WSS (TLS 1.2+).
 - The tunnel is outbound from the runner; the user's PC opens no inbound port.
 - Every session has a random access token; the stream and control endpoints reject requests without it.
-- The token never travels in a URL in a released version. The client exchanges it once for a short-lived HttpOnly cookie, which covers HTTP requests and the MJPEG stream; a WebSocket proves itself by sending the token as its first message (SDS 6.3). Only the throwaway R0 spike passes the token as a query string.
+- The token never travels in a URL in a released version. The client exchanges it once for a short-lived HttpOnly cookie, which covers HTTP requests and the video stream; a WebSocket proves itself by sending the token as its first message (SDS 6.3). Only the throwaway R0 spike passes the token as a query string.
 
 ## 5. Non-functional requirements
 
@@ -442,7 +443,7 @@ The targets below are starting values; the proof of concept (section 7) measures
 | NFR-PERF-01 | Time from `up` to a usable simulator when a saved build exists | Under 3 minutes (95th percentile) |
 | NFR-PERF-02 | Tap-to-screen-update latency in Mode B over the tunnel | Under 400 ms median |
 | NFR-PERF-03 | Tap-to-screen-update latency in Mode A over USB | Under 150 ms median |
-| NFR-PERF-04 | Stream frame rate | At least 15 fps in Mode B; 25 fps in Mode A |
+| NFR-PERF-04 | Stream frame rate | At least 15 fps in Mode B (H.264 stream, on a 20 Mbit/s connection; ADR 0010); 25 fps in Mode A |
 | NFR-PERF-05 | Live reload of a JavaScript change (React Native) | Under 5 seconds |
 | NFR-PERF-06 | MCP tool response for screenshot or tap | Under 1 second |
 | NFR-PERF-07 | Desktop app memory use while streaming | Under 400 MB |
@@ -616,7 +617,7 @@ Work ships in five phases, R0 to R4, and each one starts only when the previous 
 
 ```mermaid
 flowchart LR
-    R0["<b>R0 Proof of concept</b><br/>Runner boots simulator<br/>serve-sim + tunnel<br/>Measure lag, start time<br/><i>Gate: start under 3 min,<br/>median lag under 400 ms,<br/>MJPEG + WebSocket via tunnel</i>"]
+    R0["<b>R0 Proof of concept</b><br/>Runner boots simulator<br/>serve-sim + tunnel<br/>Measure lag, start time<br/><i>Gate: start under 3 min,<br/>median lag under 400 ms,<br/>video + WebSocket via tunnel</i>"]
     R1["<b>R1 Cloud simulator</b><br/>GitHub sign-in + repo<br/>Stack detection<br/>Smart build + cache<br/>Mode B + idle shutdown<br/>MCP tools + conditions<br/><i>Gate: 15-min first run</i>"]
     R2["<b>R2 Real iPhone</b><br/>Mode A: go-ios + WDA<br/>Signing via ASC API<br/>Stats + network shaping<br/>Record + replay<br/>Tap by label<br/><i>Gate: device run, 0 min</i>"]
     R3["<b>R3 Automation</b><br/>Mode C: Maestro tests<br/>Conditions in tests<br/>Bug bundle + export<br/>Visual diff + notes<br/><i>Gate: agent self-check</i>"]
@@ -632,7 +633,7 @@ The proof of concept comes first because stream lag through a tunnel is the one 
 
 ### 7.1 Acceptance per release
 
-- [ ] **R0:** a workflow boots a simulator, starts serve-sim, opens a tunnel and prints the URL and a per-run access token only in encrypted form (never in plain text); tap lag measured on a Windows PC; the MJPEG stream and a WebSocket log stream confirmed working through the Cloudflare quick tunnel. Gate: under 3 minutes from simulator boot to tunnel ready (boot, install, launch, tunnel; the app build is timed separately because R1 sessions start from a saved build, NFR-PERF-01), and median tap lag under 400 ms (NFR-PERF-02), with the 95th percentile reported for information.
+- [ ] **R0:** a workflow boots a simulator, starts serve-sim, opens a tunnel and prints the URL and a per-run access token only in encrypted form (never in plain text); tap lag measured on a Windows PC; the video stream (H.264, ADR 0010) and a WebSocket log stream confirmed working through the Cloudflare quick tunnel. Gate: under 3 minutes from simulator boot to tunnel ready (boot, install, launch, tunnel; the app build is timed separately because R1 sessions start from a saved build, NFR-PERF-01), and median tap lag under 400 ms (NFR-PERF-02), with the 95th percentile reported for information.
 - [ ] **R1:** UC-01 to UC-04, plus UC-09 on the simulator, pass end to end on one Flutter and one React Native sample app; no runner outlives its idle timeout in 20 test sessions.
 - [ ] **R2:** UC-05, UC-07 and UC-08 pass on a real iPhone with 0 runner minutes after the build.
 - [ ] **R3:** UC-06 passes with conditions set inside test flows; an agent fixes a seeded bug using only the bug bundle.
