@@ -134,6 +134,10 @@ Add one line per decision: date, decision, why.
 - 2026-11-14: Node.js 20 is the minimum everywhere; CI pins 20.
 - 2026-11-14: TypeScript 6 and Vitest 4, not the newest majors: typescript-eslint does not support TypeScript 7 yet, and Vitest 5 needs Node 22.
 - 2026-11-14: Licence is MIT.
+- 2026-11-17: Sign-in opens the browser at GitHub's device page; sign-out deletes local tokens and offers GitHub's revoke page, since revoking via API needs a client secret we never ship (FR-SET-08, FR-SET-09, ADR 0009). Human-only, no MCP tool.
+- 2026-11-17: serve-sim pinned to an exact version (0.1.49): it is 0.x and publishes almost daily. Its taps are a WebSocket (`/helper/<udid>/ws`, byte 0x03 + JSON), not `POST /input`; its own logs use SSE, so the gateway serves `/ws/logs` itself.
+- 2026-11-17: R0 spike: boot the simulator after the build so boot to tunnel ready is measured like an R1 session; `actions: read` permission only to read the dispatch time; spike deps `ws` (gateway) and `jpeg-js` (measure); viewer page, `/shutdown`, Animate switch, H.264 data-rate check and a local fake simulator added.
+- 2026-11-17: The `R0_SPIKE_KEY` secret is not created yet (placeholder name only). The spike workflow stops in its first step if it is missing, so the tunnel URL can never be printed in plain text.
 
 ## Open items
 
@@ -145,7 +149,8 @@ Known gaps with no action yet. Remove a line when it is resolved.
   in the fingerprint, plus a cheap "re-bundle only" path that rebuilds just the JS
   bundle and swaps it into the saved .app. Revise NFR-COST-01 and SDS 3.3 then.
 - **R1, session cookie details:** lifetime, `SameSite` value and WebSocket auth
-  timeout (ADR 0008).
+  timeout (ADR 0008). serve-sim already implements token → `/auth` → HttpOnly
+  `SameSite=Lax` cookie; check whether the session agent can reuse it.
 - **Node.js version:** Node 20 reached end of life in April 2026 and new tool
   majors (Vitest 5) already need Node 22. Decide before R1 whether to move the
   minimum to Node 22; that would also unlock Vitest 5.
