@@ -18,10 +18,14 @@ streamed to Windows with usable lag, through a Cloudflare quick tunnel.
   sessions start from a saved build. The 95th percentile lag is reported for
   information only.
 - The spike prints the tunnel URL and a per-run token only in encrypted form.
-- **This repo holds only product code and docs.** The R0 spike (test app,
-  workflow, gateway, measure tools) lives in a separate test repo, the way real
-  users will point SimBridge at their own repos. The spike code written so far
-  is kept on the branch `archive/r0-spike-code`.
+- **This repo holds only product code and docs.** The R0 spike runs against
+  the test repo `MustafaDilawarKhan/expo-rsc-movies` (public fork of Evan
+  Bacon's Expo RSC movies app), the way real users will point SimBridge at
+  their own repos. That repo gets only one added file, the workflow
+  `.github/workflows/simbridge-r0.yml`; its app code is never changed. The
+  workflow fetches the spike tools (gateway, runner scripts) from this repo's
+  branch `archive/r0-spike-code`, where the PC tools (`decrypt-url`,
+  `measure`, `dry-run`) also live.
 - Do NOT build R1 features (CLI, MCP server, desktop app) until the gate passes.
 - Update this section whenever the phase changes.
 
@@ -146,6 +150,7 @@ Add one line per decision: date, decision, why.
 - 2026-11-17: R0 spike: boot the simulator after the build so boot to tunnel ready is measured like an R1 session; `actions: read` permission only to read the dispatch time; spike deps `ws` (gateway) and `jpeg-js` (measure); viewer page, `/shutdown`, Animate switch, H.264 data-rate check and a local fake simulator added.
 - 2026-11-17: The R0 passphrase was generated on the developer's PC at `%USERPROFILE%\.simbridge\r0-spike-key.txt` (owner-only, never committed or displayed). It becomes the `R0_SPIKE_KEY` secret of the test repo that runs the spike; until then the spike workflow stops in its first step, so the tunnel URL can never be printed in plain text.
 - 2026-11-17: No demo or spike code in the product repo. The test app and R0 spike move to a separate public test repo (public keeps macOS minutes free; GitHub terms require a workflow to build only its own repo). Spike code archived on `archive/r0-spike-code`; serve-sim findings kept in `docs/spikes/serve-sim-findings.md`.
+- 2026-11-17: Test repo for R0 is `MustafaDilawarKhan/expo-rsc-movies` (public, Expo SDK 54, Bun, two native tabs, movie data from a hosted server). Only a workflow file is added there. `measure` taps the two tabs alternately and scrolls for frame rate, since the app has no counter button. Bun 1.4.4 via oven-sh/setup-bun v2.2.0; `EXPO_UNSTABLE_DEPLOY_SERVER=0` during the build so it never tries to publish a server.
 
 ## Open items
 

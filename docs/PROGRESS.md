@@ -111,9 +111,11 @@ in CLAUDE.md:
 
 ## What is next
 
-1. **You:** choose the test repo, either a new public sample repo or one of
-   your own app repos.
-2. **Me:** move the spike code into that repo and store `R0_SPIKE_KEY` there.
+1. **Done:** you chose the test repo
+   [`expo-rsc-movies`](https://github.com/MustafaDilawarKhan/expo-rsc-movies)
+   (public, so Mac minutes are free).
+2. **Me:** add one workflow file to that repo (its app code stays untouched),
+   adapt the spike tools to its screens, and store `R0_SPIKE_KEY` there.
 3. **Me, after your go-ahead:** start the workflow, watch it, fix anything that
    fails (asking before every new run), and guide you through `decrypt-url` and
    `measure`.
