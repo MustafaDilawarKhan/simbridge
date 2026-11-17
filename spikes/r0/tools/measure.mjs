@@ -63,8 +63,12 @@ function percentile(values, p) {
 // --- Pixel comparison --------------------------------------------------------
 
 function decode(frame) {
-  if (!frame.image) {
-    frame.image = jpeg.decode(frame.jpeg, { useTArray: true, formatAsRGBA: true });
+  if (frame.image === undefined) {
+    try {
+      frame.image = jpeg.decode(frame.jpeg, { useTArray: true, formatAsRGBA: true });
+    } catch {
+      frame.image = null; // a damaged frame (run 5): skip it instead of stopping
+    }
   }
   return frame.image;
 }
@@ -73,6 +77,7 @@ function decode(frame) {
 function changedShare(frameA, frameB, rect) {
   const a = decode(frameA);
   const b = decode(frameB);
+  if (!a || !b) return 0;
   if (a.width !== b.width || a.height !== b.height) return 1;
   const x0 = Math.floor(rect.x0 * a.width);
   const x1 = Math.ceil(rect.x1 * a.width);
