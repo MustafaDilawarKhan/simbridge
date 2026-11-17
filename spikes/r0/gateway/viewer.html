@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>SimBridge R0 viewer</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f6f7f9;
+        --panel: #ffffff;
+        --text: #16181d;
+        --muted: #5b6270;
+        --border: #d9dde4;
+        --accent: #1d4ed8;
+        --danger: #b42318;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #111318;
+          --panel: #1a1d24;
+          --text: #e8eaee;
+          --muted: #9aa2b1;
+          --border: #2c313b;
+          --accent: #7aa2ff;
+          --danger: #ff7a6b;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 16px;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.45 system-ui,
+          sans-serif;
+      }
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0;
+      }
+      .status {
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      main {
+        display: grid;
+        grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
+        gap: 16px;
+      }
+      @media (max-width: 760px) {
+        main {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+      .screen {
+        background: #000;
+        border-radius: 12px;
+        overflow: hidden;
+        touch-action: none;
+        user-select: none;
+      }
+      .screen img {
+        display: block;
+        width: 100%;
+        height: auto;
+        cursor: crosshair;
+      }
+      section {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px;
+        min-width: 0;
+      }
+      h2 {
+        font-size: 14px;
+        margin: 0 0 8px;
+      }
+      #logs {
+        height: 60vh;
+        overflow: auto;
+        margin: 0;
+        font:
+          12px/1.4 ui-monospace,
+          monospace;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      button {
+        font: inherit;
+        padding: 6px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--danger);
+        color: var(--danger);
+        background: transparent;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>SimBridge R0 viewer</h1>
+      <span class="status" id="status">Connecting…</span>
+      <button id="end" type="button">End session now</button>
+    </header>
+    <main>
+      <div class="screen"><img id="screen" alt="Simulator screen" draggable="false" /></div>
+      <section>
+        <h2>App logs (WebSocket /ws/logs)</h2>
+        <pre id="logs"></pre>
+      </section>
+    </main>
+    <script>
+      // The token arrives as ?t=… (R0 spike only; ADR 0008 replaces this in R1).
+      const token = new URLSearchParams(location.search).get('t') || '';
+      const q = 't=' + encodeURIComponent(token);
+      const wsBase = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+      const statusEl = document.getElementById('status');
+      const logsEl = document.getElementById('logs');
+      const img = document.getElementById('screen');
+      const state = { frames: 0, input: 'closed', logs: 'closed', lines: 0 };
+
+      function render() {
+        statusEl.textContent =
+          'input: ' + state.input + ' · logs: ' + state.logs + ' · log lines: ' + state.lines;
+      }
+
+      // Video: a plain <img> on the MJPEG stream.
+      img.src = '/stream.mjpeg?' + q;
+
+      // Taps: serve-sim's input socket. Message = byte 0x03 + JSON {type, x, y}, x/y from 0 to 1.
+      let input;
+      function connectInput() {
+        input = new WebSocket(wsBase + '/ws?' + q);
+        input.binaryType = 'arraybuffer';
+        input.onopen = () => ((state.input = 'open'), render());
+        input.onclose = () => {
+          state.input = 'closed, retrying';
+          render();
+          setTimeout(connectInput, 2000);
+        };
+      }
+      connectInput();
+
+      function sendTouch(type, event) {
+        if (!input || input.readyState !== WebSocket.OPEN) return;
+        const rect = img.getBoundingClientRect();
+        const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+        const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+        const json = new TextEncoder().encode(JSON.stringify({ type, x, y }));
+        const message = new Uint8Array(json.length + 1);
+        message[0] = 0x03;
+        message.set(json, 1);
+        input.send(message);
+      }
+      let pressed = false;
+      img.addEventListener('pointerdown', (e) => {
+        pressed = true;
+        img.setPointerCapture(e.pointerId);
+        sendTouch('begin', e);
+      });
+      img.addEventListener('pointermove', (e) => pressed && sendTouch('move', e));
+      img.addEventListener('pointerup', (e) => {
+        if (!pressed) return;
+        pressed = false;
+        sendTouch('end', e);
+      });
+
+      // Logs: our own WebSocket, because quick tunnels do not carry SSE.
+      function connectLogs() {
+        const logs = new WebSocket(wsBase + '/ws/logs?' + q);
+        logs.onopen = () => ((state.logs = 'open'), render());
+        logs.onmessage = (event) => {
+          const message = JSON.parse(event.data);
+          if (message.type !== 'line') return;
+          state.lines += 1;
+          logsEl.textContent += message.line + '\n';
+          if (logsEl.textContent.length > 200000)
+            logsEl.textContent = logsEl.textContent.slice(-100000);
+          logsEl.scrollTop = logsEl.scrollHeight;
+          render();
+        };
+        logs.onclose = () => {
+          state.logs = 'closed, retrying';
+          render();
+          setTimeout(connectLogs, 2000);
+        };
+      }
+      connectLogs();
+
+      document.getElementById('end').addEventListener('click', async () => {
+        if (!confirm('End the session now? The runner shuts down and stops using minutes.')) return;
+        await fetch('/shutdown?' + q, { method: 'POST' });
+        statusEl.textContent = 'Session ending…';
+      });
+      render();
+    </script>
+  </body>
+</html>
