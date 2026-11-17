@@ -24,6 +24,7 @@ SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
 
 GATEWAY_PID=""
 TUNNEL_PID=""
+TIMINGS_SHOWN="no"
 
 cleanup() {
   local status=$?
@@ -33,6 +34,10 @@ cleanup() {
   npx --yes "serve-sim@${SERVE_SIM_VERSION}" --kill "$UDID" >/dev/null 2>&1 || true
   xcrun simctl shutdown "$UDID" >/dev/null 2>&1 || true
   stamp session_end || true
+  if [ "$TIMINGS_SHOWN" = "no" ]; then
+    echo "--- timings so far"
+    node "$here/timings.mjs" "$TIMINGS" || true
+  fi
   if [ -f "$STATE_DIR/gateway.log" ]; then
     echo "--- gateway log, last 40 lines (paths only, never tokens)"
     tail -n 40 "$STATE_DIR/gateway.log" | redact
@@ -126,13 +131,36 @@ if [ -z "$URL" ]; then
 fi
 echo "::add-mask::$URL"
 echo "::add-mask::${URL#https://}"
+stamp tunnel_url
 
-if ! wait_for_http "$URL/health" 120; then
-  echo "::error::the tunnel URL was not reachable within 120 s"
+# Check the tunnel from the Mac itself. A quick tunnel's name exists in DNS
+# only a moment after cloudflared prints it. If the Mac asks its own resolver
+# too early, it gets "no such name" and macOS caches that answer, so every
+# retry fails for minutes (run 1 failed this way). So: ask Cloudflare's DNS
+# (1.1.1.1) directly and connect to that address with curl --resolve, which
+# never touches the Mac's resolver cache.
+HOST="${URL#https://}"
+TUNNEL_CHECK="not confirmed"
+for _ in $(seq 1 120); do
+  ip="$(dig +short +time=2 +tries=1 @1.1.1.1 "$HOST" A 2>/dev/null | grep -E '^[0-9.]+$' | head -n 1 || true)"
+  if [ -n "$ip" ] &&
+    curl -fsS -o /dev/null --max-time 5 --resolve "$HOST:443:$ip" "$URL/health" 2>"$STATE_DIR/tunnel-check.err"; then
+    TUNNEL_CHECK="reached through 1.1.1.1"
+    break
+  fi
+  sleep 1
+done
+if [ "$TUNNEL_CHECK" = "not confirmed" ]; then
+  # Do not give up: the PC uses its own DNS and may still reach the tunnel.
+  # Keep the session up so it can be tried from the PC, and say so clearly.
+  echo "::warning::the Mac could not reach its own tunnel within 120 s; keeping the session up so the PC can try"
+  echo "Last check error (redacted):"
+  redact <"$STATE_DIR/tunnel-check.err" | tail -n 3 || true
   tail -n 30 "$STATE_DIR/cloudflared.log" | redact
-  exit 1
+else
+  stamp tunnel_ready
 fi
-stamp tunnel_ready
+echo "Tunnel check from the Mac: $TUNNEL_CHECK"
 echo "Tunnel connections (protocol and edge location):"
 grep -E 'Registered tunnel connection' "$STATE_DIR/cloudflared.log" | redact | head -n 4 || true
 
@@ -146,6 +174,7 @@ echo "On your PC run:  node spikes/r0/tools/decrypt-url.mjs"
 echo
 
 node "$here/timings.mjs" "$TIMINGS" | tee -a "$SUMMARY"
+TIMINGS_SHOWN="yes"
 {
   echo
   echo "## Encrypted session"

@@ -17,6 +17,7 @@ const LABELS = {
   launched: 'App launched',
   serve_sim_ready: 'serve-sim streaming',
   gateway_ready: 'Gateway up',
+  tunnel_url: 'Tunnel address issued by Cloudflare',
   tunnel_ready: 'Tunnel reachable from the internet',
   session_end: 'Session ended',
 };
@@ -52,6 +53,8 @@ if (gate != null) {
   lines.push(
     `- **Start-time gate (boot to tunnel ready, at most ${GATE_SECONDS} s): ${gate} s, ${pass ? 'PASS' : 'FAIL'}**`,
   );
+} else {
+  lines.push('- **Start-time gate: not measured, the Mac could not confirm the tunnel was reachable**');
 }
 const phases = [
   ['Waiting for a Mac (dispatch to job start)', 'dispatched', 'job_start'],
