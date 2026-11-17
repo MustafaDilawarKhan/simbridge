@@ -1,14 +1,40 @@
-// Where things are on the sample app's screen, as shares of the screen (0 to 1).
-// Must match the percentages in spikes/r0/sample-app/App.tsx.
+// Default tap points for the R0 test app, expo-rsc-movies: two native tabs at
+// the bottom of the screen. Values are shares of the screen (0 to 1). Every one
+// can be overridden on the measure command line, after reading the real tab
+// positions from the viewer (it shows x and y of every click).
 
-/** Point to tap to press the counter button. */
-export const COUNTER_TAP = { x: 0.5, y: 0.55 };
+/** First tab (Search). */
+export const DEFAULT_TAP_A = { x: 0.3, y: 0.94 };
 
-/** Pixels watched for a tap's effect: inside the counter button, away from its edges. */
-export const COUNTER_WATCH = { x0: 0.15, x1: 0.85, y0: 0.48, y1: 0.62 };
+/** Second tab. */
+export const DEFAULT_TAP_B = { x: 0.7, y: 0.94 };
 
-/** Point to tap to switch the moving bar on or off. */
-export const ANIMATE_TAP = { x: 0.5, y: 0.85 };
+/** Pixels watched for a tap's effect: everything below the status bar, whose clock would count as a change. */
+export const DEFAULT_WATCH = { x0: 0, x1: 1, y0: 0.07, y1: 1 };
 
-/** Pixels of the moving bar's track. */
-export const BAR_WATCH = { x0: 0.06, x1: 0.94, y0: 0.125, y1: 0.155 };
+/** Drag used to scroll the list during the frame-rate test. */
+export const SCROLL_FROM = { x: 0.5, y: 0.7 };
+export const SCROLL_TO = { x: 0.5, y: 0.35 };
+
+/** Parses "x,y" into a point, or returns the fallback. */
+export function parsePoint(text, fallback) {
+  if (!text) return fallback;
+  const [x, y] = text.split(',').map(Number);
+  if (![x, y].every((n) => Number.isFinite(n) && n >= 0 && n <= 1)) {
+    throw new Error(
+      `"${text}" is not a point; use x,y with numbers from 0 to 1, for example 0.3,0.94`,
+    );
+  }
+  return { x, y };
+}
+
+/** Parses "x0,y0,x1,y1" into a rectangle, or returns the fallback. */
+export function parseRect(text, fallback) {
+  if (!text) return fallback;
+  const [x0, y0, x1, y1] = text.split(',').map(Number);
+  const valid = [x0, y0, x1, y1].every((n) => Number.isFinite(n) && n >= 0 && n <= 1);
+  if (!valid || x1 <= x0 || y1 <= y0) {
+    throw new Error(`"${text}" is not an area; use x0,y0,x1,y1 with numbers from 0 to 1`);
+  }
+  return { x0, y0, x1, y1 };
+}

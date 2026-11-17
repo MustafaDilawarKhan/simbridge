@@ -2,24 +2,35 @@
 // Measures a live R0 session from the PC and writes the numbers to
 // spikes/r0/results/<date>.json (no URL or token is ever written).
 //
-//   node tools/measure.mjs [r0v1.xxxx] [--taps=20] [--fps-seconds=30] [--avcc-seconds=15] [--out=file]
+//   node tools/measure.mjs [r0v1.xxxx] [--tap-a=x,y] [--tap-b=x,y] [--watch=x0,y0,x1,y1]
+//                          [--taps=20] [--fps-seconds=30] [--avcc-seconds=15] [--out=file]
 //
 // What it measures (NFR-PERF-01, NFR-PERF-02, NFR-PERF-04, FR-SIM-13):
 //   1. time to first video frame (MJPEG)
-//   2. tap lag: tap the counter, time until the button's pixels change; median and p95
-//   3. frame rate and data rate of MJPEG while the bar animates
+//   2. tap lag: taps the two tabs in turn (each tap switches the screen) and
+//      times how long until the screen changes; median and p95
+//   3. frame rate and data rate of MJPEG while the list scrolls
 //   4. data rate of serve-sim's H.264 stream, for comparison
-//   5. whether the WebSocket log stream connects and carries the tap log lines
+//   5. whether the WebSocket log stream connects and keeps delivering messages
 //
-// Every frame's arrival time is stamped before any decoding, and frames are
-// decoded only after each measuring window, so decoding cannot inflate the lag.
+// Frame arrival times are stamped before any decoding, and frames are decoded
+// only after each measuring window, so decoding cannot inflate the lag.
+// Don't touch the simulator while this runs.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import jpeg from 'jpeg-js';
 
-import { ANIMATE_TAP, BAR_WATCH, COUNTER_TAP, COUNTER_WATCH } from '../lib/layout.mjs';
+import {
+  DEFAULT_TAP_A,
+  DEFAULT_TAP_B,
+  DEFAULT_WATCH,
+  SCROLL_FROM,
+  SCROLL_TO,
+  parsePoint,
+  parseRect,
+} from '../lib/layout.mjs';
 import { AvccParser, MjpegParser } from '../lib/mjpeg.mjs';
 import { loadSession } from '../lib/session-input.mjs';
 
@@ -34,6 +45,9 @@ function option(name, fallback) {
 const TAPS = Number(option('taps', 20));
 const FPS_SECONDS = Number(option('fps-seconds', 30));
 const AVCC_SECONDS = Number(option('avcc-seconds', 15));
+const TAP_A = parsePoint(option('tap-a'), DEFAULT_TAP_A);
+const TAP_B = parsePoint(option('tap-b'), DEFAULT_TAP_B);
+const WATCH = parseRect(option('watch'), DEFAULT_WATCH);
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const now = () => performance.now();
@@ -49,7 +63,9 @@ function percentile(values, p) {
 // --- Pixel comparison --------------------------------------------------------
 
 function decode(frame) {
-  if (!frame.image) frame.image = jpeg.decode(frame.jpeg, { useTArray: true, formatAsRGBA: true });
+  if (!frame.image) {
+    frame.image = jpeg.decode(frame.jpeg, { useTArray: true, formatAsRGBA: true });
+  }
   return frame.image;
 }
 
@@ -64,8 +80,8 @@ function changedShare(frameA, frameB, rect) {
   const y1 = Math.ceil(rect.y1 * a.height);
   let changed = 0;
   let total = 0;
-  for (let y = y0; y < y1; y += 2) {
-    for (let x = x0; x < x1; x += 2) {
+  for (let y = y0; y < y1; y += 3) {
+    for (let x = x0; x < x1; x += 3) {
       const i = (y * a.width + x) * 4;
       const diff = Math.max(
         Math.abs(a.data[i] - b.data[i]),
@@ -87,9 +103,9 @@ class MjpegReader {
     this.url = url;
     this.frames = [];
     this.bytes = 0;
+    this.count = 0; // all frames ever received (the list below keeps only recent ones)
     this.firstFrameMs = null;
     this.lastFrameAt = 0;
-    this.count = 0; // all frames ever received (the list below keeps only recent ones)
     this.abort = new AbortController();
   }
 
@@ -133,17 +149,15 @@ function openSocket(url, { binary = false } = {}) {
   return new Promise((resolveOpen, reject) => {
     const socket = new WebSocket(url);
     if (binary) socket.binaryType = 'arraybuffer';
-    const timer = setTimeout(
-      () => reject(new Error(`WebSocket did not open: ${new URL(url).pathname}`)),
-      15000,
-    );
+    const path = new URL(url).pathname;
+    const timer = setTimeout(() => reject(new Error(`WebSocket did not open: ${path}`)), 15000);
     socket.addEventListener('open', () => {
       clearTimeout(timer);
       resolveOpen(socket);
     });
     socket.addEventListener('error', () => {
       clearTimeout(timer);
-      reject(new Error(`WebSocket failed: ${new URL(url).pathname}`));
+      reject(new Error(`WebSocket failed: ${path}`));
     });
   });
 }
@@ -162,6 +176,29 @@ async function tap(input, point) {
   return sentAt;
 }
 
+/** One-finger drag from `from` to `to` over `ms`, sending a move every 16 ms. */
+async function drag(input, from, to, ms = 400) {
+  input.send(touchMessage('begin', from));
+  const steps = Math.max(2, Math.round(ms / 16));
+  for (let i = 1; i <= steps; i += 1) {
+    await sleep(16);
+    const k = i / steps;
+    const point = { x: from.x + (to.x - from.x) * k, y: from.y + (to.y - from.y) * k };
+    input.send(touchMessage('move', point));
+  }
+  input.send(touchMessage('end', to));
+}
+
+/** Scrolls up and down until `stopAt` (a performance.now() time). */
+async function keepScrolling(input, stopAt) {
+  let up = true;
+  while (now() < stopAt) {
+    await (up ? drag(input, SCROLL_FROM, SCROLL_TO) : drag(input, SCROLL_TO, SCROLL_FROM));
+    up = !up;
+    await sleep(250);
+  }
+}
+
 async function waitFor(check, timeoutMs, stepMs = 50) {
   const deadline = now() + timeoutMs;
   while (now() < deadline) {
@@ -171,9 +208,9 @@ async function waitFor(check, timeoutMs, stepMs = 50) {
   return check();
 }
 
-/** Waits until no frame has arrived for `quietMs` (or `maxMs` passes). */
-async function waitQuiet(stream, quietMs = 300, maxMs = 2000) {
-  await waitFor(() => now() - stream.lastFrameAt >= quietMs, maxMs, 25);
+/** Waits until no frame has arrived for `quietMs` (or `maxMs` passes). True if it got quiet. */
+async function waitQuiet(stream, quietMs = 300, maxMs = 3000) {
+  return waitFor(() => now() - stream.lastFrameAt >= quietMs, maxMs, 25);
 }
 
 // --- Main --------------------------------------------------------------------
@@ -185,12 +222,19 @@ async function main() {
   const result = {
     measuredAt: new Date().toISOString(),
     client: { platform: process.platform, node: process.version },
-    settings: { taps: TAPS, fpsSeconds: FPS_SECONDS, avccSeconds: AVCC_SECONDS },
+    settings: {
+      taps: TAPS,
+      fpsSeconds: FPS_SECONDS,
+      avccSeconds: AVCC_SECONDS,
+      tapA: TAP_A,
+      tapB: TAP_B,
+      watch: WATCH,
+    },
   };
 
-  // Log stream first, so it sees every tap's log line.
+  // Log stream first, so it sees everything that follows.
   console.log('Connecting to the WebSocket log stream...');
-  const logs = { connected: false, openMs: null, lines: 0, tapLines: 0, ticks: 0, error: null };
+  const logs = { connected: false, openMs: null, lines: 0, ticks: 0, error: null };
   const logsStart = now();
   let logSocket = null;
   try {
@@ -200,10 +244,7 @@ async function main() {
     logSocket.addEventListener('message', (event) => {
       const message = JSON.parse(String(event.data));
       if (message.type === 'tick') logs.ticks += 1;
-      if (message.type === 'line' && !message.replay) {
-        logs.lines += 1;
-        if (message.line.includes('[r0] tap')) logs.tapLines += 1;
-      }
+      if (message.type === 'line' && !message.replay) logs.lines += 1;
     });
   } catch (error) {
     logs.error = error.message;
@@ -222,30 +263,31 @@ async function main() {
   console.log('Opening the tap input socket...');
   const input = await openSocket(`${wsBase}/ws?${q}`, { binary: true });
 
-  // Make sure the bar is still (a previous run may have left it on).
-  await sleep(1000);
-  const recent = stream.frames.filter((f) => f.t > now() - 1000);
-  if (recent.length >= 5 && changedShare(recent[0], recent.at(-1), BAR_WATCH) > 0.02) {
-    console.log('  Animate was on; switching it off.');
-    await tap(input, ANIMATE_TAP);
-    await sleep(1000);
-  }
+  // Start on tab A, unmeasured, so the first measured tap (on B) changes the screen.
+  await tap(input, TAP_A);
+  await sleep(1500);
 
   // --- Tap lag ---
-  console.log(`Measuring tap lag over ${TAPS} taps...`);
+  console.log(`Measuring tap lag over ${TAPS} taps, switching tabs each time...`);
   const taps = [];
   for (let i = 1; i <= TAPS; i += 1) {
-    await waitQuiet(stream);
+    const point = i % 2 === 1 ? TAP_B : TAP_A;
+    const quiet = await waitQuiet(stream);
     const baseline = stream.latest();
-    const sentAt = await tap(input, COUNTER_TAP);
-    await sleep(2000); // collect frames; decode only afterwards
+    const sentAt = await tap(input, point);
+    await sleep(2500); // collect frames; decode only afterwards
     const after = stream.frames.filter((f) => f.t >= sentAt);
-    const hit = after.find((frame) => changedShare(baseline, frame, COUNTER_WATCH) > 0.05);
+    const hit = after.find((frame) => changedShare(baseline, frame, WATCH) > 0.01);
     const lagMs = hit ? hit.t - sentAt : null;
-    taps.push({ n: i, lagMs: round(lagMs), framesAfterTap: after.length });
-    console.log(
-      `  tap ${String(i).padStart(2)}: ${lagMs == null ? 'no change seen' : `${round(lagMs)} ms`}`,
-    );
+    taps.push({
+      n: i,
+      tab: point === TAP_A ? 'A' : 'B',
+      lagMs: round(lagMs),
+      framesAfterTap: after.length,
+      screenWasQuiet: quiet,
+    });
+    const shown = lagMs == null ? 'no change seen' : `${round(lagMs)} ms`;
+    console.log(`  tap ${String(i).padStart(2)}: ${shown}`);
     await sleep(300 + Math.random() * 400); // jitter, so taps do not line up with frame timing
   }
   const lags = taps.map((t) => t.lagMs).filter((v) => v != null);
@@ -259,40 +301,39 @@ async function main() {
     taps,
   };
 
-  // --- Frame rate and data rate while animating ---
-  console.log(`Measuring MJPEG frame rate for ${FPS_SECONDS} s with the bar moving...`);
-  await tap(input, ANIMATE_TAP);
+  // --- Frame rate and data rate while the list scrolls ---
+  console.log(`Measuring MJPEG frame rate for ${FPS_SECONDS} s while scrolling...`);
+  await tap(input, TAP_A); // the Search tab has the scrolling list
   await sleep(1500);
+  const firstInWindow = stream.latest();
   const fpsStart = now();
   const countBefore = stream.count;
   const bytesBefore = stream.bytes;
-  const firstInWindow = stream.latest();
-  await sleep(FPS_SECONDS * 1000);
+  await keepScrolling(input, fpsStart + FPS_SECONDS * 1000);
   const seconds = (now() - fpsStart) / 1000;
   const framesInWindow = stream.count - countBefore;
-  // The bar loops, so compare against several recent frames, not just the last.
-  const barMoved = stream.frames
+  const screenMoved = stream.frames
     .slice(-10)
-    .some((frame) => changedShare(firstInWindow, frame, BAR_WATCH) > 0.02);
+    .some((frame) => changedShare(firstInWindow, frame, WATCH) > 0.01);
   result.mjpeg = {
     fps: round(framesInWindow / seconds, 1),
     kilobytesPerSecond: round((stream.bytes - bytesBefore) / 1024 / seconds),
     framesCounted: framesInWindow,
-    animationSeen: barMoved,
+    screenMoved,
   };
   console.log(`  ${result.mjpeg.fps} fps, ${result.mjpeg.kilobytesPerSecond} KB/s`);
   stream.stop();
 
-  // --- H.264 data rate, same moving screen ---
-  console.log(`Measuring the H.264 stream for ${AVCC_SECONDS} s...`);
+  // --- H.264 data rate, same scrolling ---
+  console.log(`Measuring the H.264 stream for ${AVCC_SECONDS} s while scrolling...`);
+  const scrolling = keepScrolling(input, now() + AVCC_SECONDS * 1000);
   result.avcc = await measureAvcc(`${url}/stream.avcc?${q}`, AVCC_SECONDS);
+  await scrolling;
   console.log(
     result.avcc.error
       ? `  ${result.avcc.error}`
       : `  ${result.avcc.framesPerSecond} frames/s, ${result.avcc.kilobytesPerSecond} KB/s`,
   );
-  await tap(input, ANIMATE_TAP); // bar off again
-  await sleep(1500);
 
   input.close();
   logSocket?.close();
@@ -303,7 +344,9 @@ async function main() {
       result.tapLag.medianMs != null && result.tapLag.medianMs < GATE_TAP_LAG_MS,
     mjpegAtLeast15fps: result.mjpeg.fps >= GATE_FPS,
     mjpegThroughTunnel: result.timeToFirstFrameMs != null,
-    webSocketLogsThroughTunnel: logs.connected && logs.lines > 0,
+    // The gateway sends a message every 5 s, so receiving any proves the WebSocket
+    // path through the tunnel works even if the app itself logs little.
+    webSocketLogsThroughTunnel: logs.connected && logs.ticks + logs.lines > 0,
     note: 'Start time (boot to tunnel ready, under 3 min) is in the job summary, not measured here.',
   };
 
@@ -313,23 +356,26 @@ async function main() {
   mkdirSync(dirname(outFile), { recursive: true });
   writeFileSync(outFile, `${JSON.stringify(result, null, 2)}\n`);
 
+  const { tapLag, mjpeg, avcc, gate } = result;
   console.log('');
   console.log('Result');
   console.log(`  time to first frame   ${result.timeToFirstFrameMs} ms`);
   console.log(
-    `  tap lag               median ${result.tapLag.medianMs} ms, p95 ${result.tapLag.p95Ms} ms (${result.tapLag.missed} missed)`,
+    `  tap lag               median ${tapLag.medianMs} ms, p95 ${tapLag.p95Ms} ms (${tapLag.missed} missed)`,
   );
+  console.log(`  MJPEG                 ${mjpeg.fps} fps, ${mjpeg.kilobytesPerSecond} KB/s`);
+  console.log(`  H.264                 ${avcc.kilobytesPerSecond ?? '-'} KB/s`);
   console.log(
-    `  MJPEG                 ${result.mjpeg.fps} fps, ${result.mjpeg.kilobytesPerSecond} KB/s`,
+    `  WebSocket logs        ${logs.connected ? 'connected' : 'FAILED'}, ${logs.lines} app lines, ${logs.ticks} keep-alive messages`,
   );
-  console.log(`  H.264                 ${result.avcc.kilobytesPerSecond ?? '-'} KB/s`);
-  console.log(
-    `  WebSocket logs        ${logs.connected ? 'connected' : 'FAILED'}, ${logs.lines} lines, ${logs.tapLines} tap lines`,
-  );
-  console.log(`  gate: tap lag         ${result.gate.tapLagMedianUnder400ms ? 'PASS' : 'FAIL'}`);
-  console.log(
-    `  gate: MJPEG + WS logs ${result.gate.mjpegThroughTunnel && result.gate.webSocketLogsThroughTunnel ? 'PASS' : 'FAIL'}`,
-  );
+  console.log(`  gate: tap lag         ${gate.tapLagMedianUnder400ms ? 'PASS' : 'FAIL'}`);
+  const streamsPass = gate.mjpegThroughTunnel && gate.webSocketLogsThroughTunnel;
+  console.log(`  gate: MJPEG + WS logs ${streamsPass ? 'PASS' : 'FAIL'}`);
+  if (tapLag.missed > TAPS / 2) {
+    console.log(
+      '  Most taps changed nothing: check --tap-a and --tap-b against the tab positions shown in the viewer.',
+    );
+  }
   console.log(`Saved to ${outFile}`);
   process.exit(0);
 }

@@ -2,21 +2,22 @@
 // A pretend serve-sim for testing on Windows, so bugs are found without
 // spending a macOS runner. It copies the parts of serve-sim the spike uses:
 //
-//   GET /helper/fake/stream.mjpeg   MJPEG frames of a drawn copy of the sample app
+//   GET /helper/fake/stream.mjpeg   MJPEG frames of a drawn two-tab app
 //   GET /helper/fake/stream.avcc    fake H.264 chunks in serve-sim's wire format
 //   GET /helper/fake/config         screen size
-//   WS  /helper/fake/ws             taps (byte 0x03 + JSON), same-origin only
+//   WS  /helper/fake/ws             touches (byte 0x03 + JSON), same-origin only
 //
-// Like serve-sim, it requires "Authorization: Bearer <FAKE_TOKEN>" when FAKE_TOKEN
-// is set. FAKE_LAG_MS delays every tap's effect, to check measure sees the delay.
-// Tap log lines go to FAKE_LOG_FILE, which tools/tail-log.mjs can follow.
+// The drawn app has two tabs at the bottom (left half and right half of the
+// bar at y 0.90 to 0.98) and a striped list that moves when dragged, like the
+// test app expo-rsc-movies. Like serve-sim, it requires
+// "Authorization: Bearer <FAKE_TOKEN>" when FAKE_TOKEN is set. FAKE_LAG_MS
+// delays every tab switch, to check that measure sees the delay. Log lines go
+// to FAKE_LOG_FILE, which tools/tail-log.mjs can follow.
 import { appendFileSync } from 'node:fs';
 import http from 'node:http';
 
 import jpeg from 'jpeg-js';
 import { WebSocketServer } from 'ws';
-
-import { ANIMATE_TAP, COUNTER_WATCH } from '../lib/layout.mjs';
 
 const PORT = Number(process.env.FAKE_PORT ?? 3100);
 const TOKEN = process.env.FAKE_TOKEN ?? '';
@@ -25,20 +26,21 @@ const LOG_FILE = process.env.FAKE_LOG_FILE ?? '';
 const WIDTH = 390;
 const HEIGHT = 844;
 const BASE = '/helper/fake';
+const TAB_BAR = { y0: 0.9, y1: 0.98 };
 
-const state = { count: 0, animate: false, phase: 0 };
+const state = { tab: 'A', scroll: 0, dragFromY: null };
 
 function logLine(text) {
-  if (LOG_FILE) appendFileSync(LOG_FILE, `${new Date().toISOString()} R0Sample ${text}\n`);
+  if (LOG_FILE) appendFileSync(LOG_FILE, `${new Date().toISOString()} ExpoMovies ${text}\n`);
 }
 
 // --- Drawing -----------------------------------------------------------------
 
 function fill(buf, rect, [r, g, b]) {
-  const x0 = Math.floor(rect.x0 * WIDTH);
-  const x1 = Math.ceil(rect.x1 * WIDTH);
-  const y0 = Math.floor(rect.y0 * HEIGHT);
-  const y1 = Math.ceil(rect.y1 * HEIGHT);
+  const x0 = Math.max(0, Math.floor(rect.x0 * WIDTH));
+  const x1 = Math.min(WIDTH, Math.ceil(rect.x1 * WIDTH));
+  const y0 = Math.max(0, Math.floor(rect.y0 * HEIGHT));
+  const y1 = Math.min(HEIGHT, Math.ceil(rect.y1 * HEIGHT));
   for (let y = y0; y < y1; y += 1) {
     for (let x = x0; x < x1; x += 1) {
       const i = (y * WIDTH + x) * 4;
@@ -52,19 +54,18 @@ function fill(buf, rect, [r, g, b]) {
 
 function renderJpeg() {
   const data = Buffer.alloc(WIDTH * HEIGHT * 4, 255);
-  fill(data, { x0: 0.05, x1: 0.95, y0: 0.12, y1: 0.16 }, [238, 238, 238]);
-  const barStart = 0.05 + state.phase * 0.7;
-  fill(data, { x0: barStart, x1: barStart + 0.15, y0: 0.12, y1: 0.16 }, [124, 58, 237]);
-  fill(
-    data,
-    { x0: 0.1, x1: 0.9, y0: 0.45, y1: 0.65 },
-    state.count % 2 === 0 ? [29, 78, 216] : [249, 115, 22],
-  );
-  fill(
-    data,
-    { x0: 0.1, x1: 0.9, y0: 0.8, y1: 0.9 },
-    state.animate ? [22, 163, 74] : [107, 114, 128],
-  );
+  // Content: tab A is a blue striped list that scrolls; tab B is a plain orange page.
+  if (state.tab === 'A') {
+    for (let row = -1; row < 12; row += 1) {
+      const y0 = 0.08 + row * 0.08 + (state.scroll % 0.16);
+      fill(data, { x0: 0.05, x1: 0.95, y0, y1: y0 + 0.05 }, [29, 78, 216]);
+    }
+  } else {
+    fill(data, { x0: 0.05, x1: 0.95, y0: 0.1, y1: 0.85 }, [249, 115, 22]);
+  }
+  fill(data, { x0: 0, x1: 1, y0: 0.88, y1: 1 }, [245, 245, 245]);
+  const selected = state.tab === 'A' ? { x0: 0.1, x1: 0.45 } : { x0: 0.55, x1: 0.9 };
+  fill(data, { ...selected, ...TAB_BAR }, [0, 122, 255]);
   return jpeg.encode({ data, width: WIDTH, height: HEIGHT }, 70).data;
 }
 
@@ -92,32 +93,30 @@ function emitFrame() {
   for (const res of avccClients) res.write(avccChunk(3, Math.ceil(frame.length / 8)));
 }
 
-// Animate at 30 fps; otherwise send a frame once a second (and on every change).
-setInterval(() => {
-  if (!state.animate) return;
-  state.phase = (state.phase + 1 / 30) % 1;
-  emitFrame();
-}, 1000 / 30);
-setInterval(() => {
-  if (!state.animate) emitFrame();
-}, 1000);
-
-function within(point, rect) {
-  return point.x >= rect.x0 && point.x <= rect.x1 && point.y >= rect.y0 && point.y <= rect.y1;
-}
+// Send a frame on every change, and at least once a second.
+setInterval(emitFrame, 1000);
 
 function onTouch(touch) {
-  if (touch.type !== 'begin') return;
-  setTimeout(() => {
-    if (within(touch, { x0: 0.1, x1: 0.9, y0: 0.45, y1: 0.65 })) {
-      state.count += 1;
-      logLine(`[r0] tap ${state.count}`);
-    } else if (within(touch, { x0: 0.1, x1: 0.9, y0: 0.8, y1: 0.9 })) {
-      state.animate = !state.animate;
-      logLine(`[r0] animate ${state.animate ? 'on' : 'off'}`);
+  const inTabBar = touch.y >= TAB_BAR.y0 && touch.y <= TAB_BAR.y1;
+  if (touch.type === 'begin') {
+    state.dragFromY = inTabBar ? null : touch.y;
+    if (inTabBar) {
+      const tab = touch.x < 0.5 ? 'A' : 'B';
+      setTimeout(() => {
+        if (state.tab !== tab) logLine(`switched to tab ${tab}`);
+        state.tab = tab;
+        emitFrame();
+      }, LAG_MS);
     }
+    return;
+  }
+  if (touch.type === 'move' && state.dragFromY !== null && state.tab === 'A') {
+    state.scroll += touch.y - state.dragFromY;
+    state.dragFromY = touch.y;
     emitFrame();
-  }, LAG_MS);
+    return;
+  }
+  if (touch.type === 'end') state.dragFromY = null;
 }
 
 // --- Server ------------------------------------------------------------------
@@ -176,7 +175,5 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(
-    `fake-sim on http://127.0.0.1:${PORT}${BASE} (lag ${LAG_MS} ms, animate tap at ${ANIMATE_TAP.y}, watch ${COUNTER_WATCH.y0}-${COUNTER_WATCH.y1})`,
-  );
+  console.log(`fake-sim on http://127.0.0.1:${PORT}${BASE} (tab switch lag ${LAG_MS} ms)`);
 });

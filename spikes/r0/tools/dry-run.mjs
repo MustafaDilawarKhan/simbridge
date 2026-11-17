@@ -115,14 +115,16 @@ async function main() {
     config.status === 200 && (await config.json()).width === 390,
   );
 
-  console.log('4. measure against the fake simulator (takes about 25 s)');
+  console.log('4. measure against the fake simulator (takes about 50 s)');
   const resultFile = join(work, 'result.json');
   const measure = start(
     'measure',
     [
       'tools/measure.mjs',
       '--taps=8',
-      '--fps-seconds=12',
+      '--tap-a=0.3,0.94',
+      '--tap-b=0.7,0.94',
+      '--fps-seconds=10',
       '--avcc-seconds=3',
       `--out=${resultFile}`,
     ],
@@ -148,8 +150,8 @@ async function main() {
       `${result.timeToFirstFrameMs} ms`,
     );
     check(
-      'frame rate measured while animating',
-      result.mjpeg.fps > 10 && result.mjpeg.animationSeen,
+      'frame rate measured while scrolling',
+      result.mjpeg.fps > 10 && result.mjpeg.screenMoved,
       `${result.mjpeg.fps} fps`,
     );
     check(
@@ -158,10 +160,11 @@ async function main() {
       `${result.avcc.kilobytesPerSecond} KB/s`,
     );
     check(
-      'WebSocket logs carried the tap lines',
-      result.logs.connected && result.logs.tapLines >= 8,
-      `${result.logs.tapLines} tap lines`,
+      'WebSocket logs carried the app lines and keep-alives',
+      result.logs.connected && result.logs.lines >= 8 && result.logs.ticks > 0,
+      `${result.logs.lines} lines, ${result.logs.ticks} keep-alives`,
     );
+    check('the gate fields were filled in', result.gate.webSocketLogsThroughTunnel === true);
     const text = readFileSync(resultFile, 'utf8');
     check(
       'result file holds no URL or token',

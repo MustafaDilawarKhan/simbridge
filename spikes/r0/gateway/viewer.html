@@ -114,6 +114,7 @@
     <header>
       <h1>SimBridge R0 viewer</h1>
       <span class="status" id="status">Connecting…</span>
+      <span class="status" id="point">click the screen to tap</span>
       <button id="end" type="button">End session now</button>
     </header>
     <main>
@@ -171,6 +172,11 @@
         pressed = true;
         img.setPointerCapture(e.pointerId);
         sendTouch('begin', e);
+        // Show where you clicked, as measure's --tap-a / --tap-b need it.
+        const rect = img.getBoundingClientRect();
+        const x = ((e.clientX - rect.left) / rect.width).toFixed(2);
+        const y = ((e.clientY - rect.top) / rect.height).toFixed(2);
+        document.getElementById('point').textContent = 'last click: ' + x + ',' + y;
       });
       img.addEventListener('pointermove', (e) => pressed && sendTouch('move', e));
       img.addEventListener('pointerup', (e) => {
