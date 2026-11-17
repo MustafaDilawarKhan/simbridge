@@ -141,29 +141,36 @@ the session ends.
 
 ## Step 5: measure
 
-`measure` taps the app's two bottom tabs in turn, because each tap visibly
-changes the screen. First check where the tabs are:
+The main video stream is **H.264** (decided after run 5: full-size MJPEG
+frames need about 44 Mbit/s for 15 fps, more than a normal home line; H.264
+uses a few Mbit/s). The viewer plays H.264 and has a link to switch to MJPEG.
 
-1. In the viewer, click the first tab, then the second.
-2. Note the two `last click` values.
+`measure` taps two points in turn, A and B, and **each tap must visibly change
+the screen** (for example open and close a page). On iOS 26 the app's tab bar
+has a separate search button that opens a keyboard, so check the screen first:
 
+```powershell
+node tools\screenshot.mjs --out=screen.jpg
+```
+
+Open `screen.jpg`, or click in the viewer: the top bar shows `last click: x,y`.
 Then, while the session is live (and without touching the viewer):
 
 ```powershell
-node tools\measure.mjs --tap-a=0.31,0.95 --tap-b=0.69,0.95
+node tools\measure.mjs --tap-a=0.92,0.58 --tap-b=0.88,0.94
 ```
 
-Use your two values. Paste the same `r0v1.` line. It takes about 2.5 minutes
+Use your own two points. Paste the same `r0v1.` line. It takes about 2 minutes
 and prints:
 
-- time to first frame;
-- tap lag over 20 taps, as the median and the 95th percentile (p95);
-- MJPEG frames per second and data rate while it scrolls the list;
-- the data rate of serve-sim's H.264 stream, for comparison;
+- time to the first picture (H.264);
+- tap lag over H.264, 20 taps: the median and the 95th percentile (p95);
+- H.264 frames per second and data rate while it scrolls the list;
+- for comparison, MJPEG: a few taps, frames per second and data rate;
 - whether the WebSocket log stream delivered messages.
 
 It saves them to `results\<date>.json`. If most taps say `no change seen`, the
-tab positions were off: check them in the viewer and run it again.
+two points do not change the screen: take a screenshot and pick new ones.
 
 ## Step 6: end
 

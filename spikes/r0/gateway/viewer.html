@@ -72,11 +72,15 @@
         touch-action: none;
         user-select: none;
       }
-      .screen img {
+      .screen img,
+      .screen canvas {
         display: block;
         width: 100%;
         height: auto;
         cursor: crosshair;
+      }
+      a {
+        color: var(--accent);
       }
       section {
         background: var(--panel);
@@ -115,10 +119,14 @@
       <h1>SimBridge R0 viewer</h1>
       <span class="status" id="status">Connecting…</span>
       <span class="status" id="point">click the screen to tap</span>
+      <a id="switch" href="#">Switch video</a>
       <button id="end" type="button">End session now</button>
     </header>
     <main>
-      <div class="screen"><img id="screen" alt="Simulator screen" draggable="false" /></div>
+      <div class="screen" id="surface">
+        <canvas id="canvas" hidden></canvas>
+        <img id="screen" alt="Simulator screen" draggable="false" hidden />
+      </div>
       <section>
         <h2>App logs (WebSocket /ws/logs)</h2>
         <pre id="logs"></pre>
@@ -132,15 +140,126 @@
       const statusEl = document.getElementById('status');
       const logsEl = document.getElementById('logs');
       const img = document.getElementById('screen');
-      const state = { frames: 0, input: 'closed', logs: 'closed', lines: 0 };
+      const canvas = document.getElementById('canvas');
+      const surface = document.getElementById('surface');
+      const state = { video: '', fps: 0, frames: 0, input: 'closed', logs: 'closed', lines: 0 };
 
       function render() {
         statusEl.textContent =
-          'input: ' + state.input + ' · logs: ' + state.logs + ' · log lines: ' + state.lines;
+          'video: ' + state.video + ' ' + state.fps + ' fps · input: ' + state.input +
+          ' · logs: ' + state.logs + ' · log lines: ' + state.lines;
+      }
+      setInterval(() => {
+        state.fps = state.frames;
+        state.frames = 0;
+        render();
+      }, 1000);
+
+      // Video: H.264 by default (about 6 times less data than MJPEG, run 5),
+      // decoded by the browser's WebCodecs VideoDecoder. ?codec=mjpeg, or a
+      // browser without VideoDecoder, uses the plain MJPEG <img> instead.
+      const params = new URLSearchParams(location.search);
+      const wantMjpeg = params.get('codec') === 'mjpeg' || !('VideoDecoder' in window);
+      const switchLink = document.getElementById('switch');
+      params.set('codec', wantMjpeg ? 'h264' : 'mjpeg');
+      switchLink.href = '?' + params.toString();
+      switchLink.textContent = wantMjpeg ? 'Switch to H.264' : 'Switch to MJPEG';
+
+      function startMjpeg() {
+        state.video = 'MJPEG';
+        canvas.hidden = true;
+        img.hidden = false;
+        img.onload = () => (state.frames += 1); // fires once per frame in most browsers
+        img.src = '/stream.mjpeg?' + q;
       }
 
-      // Video: a plain <img> on the MJPEG stream.
-      img.src = '/stream.mjpeg?' + q;
+      // serve-sim's /stream.avcc: [u32 BE length][tag][payload], length = 1 + payload.
+      // Tags: 1 decoder setup (avcC), 2 keyframe, 3 delta frame, 4 seed JPEG.
+      async function startH264() {
+        state.video = 'H.264';
+        img.hidden = true;
+        canvas.hidden = false;
+        const ctx = canvas.getContext('2d');
+        let decoder = null;
+        let config = null;
+        let needKey = true;
+        let timestamp = 0;
+        const fit = (w, h) => {
+          if (canvas.width !== w || canvas.height !== h) {
+            canvas.width = w;
+            canvas.height = h;
+          }
+        };
+        function newDecoder() {
+          decoder = new VideoDecoder({
+            output: (frame) => {
+              fit(frame.displayWidth, frame.displayHeight);
+              ctx.drawImage(frame, 0, 0);
+              frame.close();
+              state.frames += 1;
+            },
+            error: () => {
+              needKey = true;
+              newDecoder();
+              if (config) decoder.configure(config);
+            },
+          });
+        }
+        newDecoder();
+        const hex = (n) => n.toString(16).padStart(2, '0');
+        function handle(tag, payload) {
+          if (tag === 1) {
+            config = {
+              codec: 'avc1.' + hex(payload[1]) + hex(payload[2]) + hex(payload[3]),
+              description: payload,
+              optimizeForLatency: true,
+            };
+            decoder.configure(config);
+            needKey = true;
+          } else if (tag === 4) {
+            createImageBitmap(new Blob([payload], { type: 'image/jpeg' })).then((bitmap) => {
+              fit(bitmap.width, bitmap.height);
+              ctx.drawImage(bitmap, 0, 0);
+              bitmap.close();
+            });
+          } else if ((tag === 2 || tag === 3) && config) {
+            if (needKey && tag === 3) return;
+            needKey = false;
+            timestamp += 16667;
+            decoder.decode(
+              new EncodedVideoChunk({ type: tag === 2 ? 'key' : 'delta', timestamp, data: payload }),
+            );
+          }
+        }
+        const response = await fetch('/stream.avcc?' + q);
+        if (!response.ok) throw new Error('H.264 stream answered HTTP ' + response.status);
+        const reader = response.body.getReader();
+        let buffer = new Uint8Array(0);
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          const joined = new Uint8Array(buffer.length + value.length);
+          joined.set(buffer);
+          joined.set(value, buffer.length);
+          buffer = joined;
+          while (buffer.length >= 5) {
+            const length =
+              ((buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3]) >>> 0;
+            if (buffer.length < 4 + length) break;
+            handle(buffer[4], buffer.slice(5, 4 + length));
+            buffer = buffer.slice(4 + length);
+          }
+        }
+        throw new Error('H.264 stream ended');
+      }
+
+      if (wantMjpeg) startMjpeg();
+      else
+        startH264().catch((error) => {
+          console.error(error);
+          state.video = 'H.264 failed (' + error.message + '), now MJPEG';
+          startMjpeg();
+        });
 
       // Taps: serve-sim's input socket. Message = byte 0x03 + JSON {type, x, y}, x/y from 0 to 1.
       let input;
@@ -158,7 +277,7 @@
 
       function sendTouch(type, event) {
         if (!input || input.readyState !== WebSocket.OPEN) return;
-        const rect = img.getBoundingClientRect();
+        const rect = surface.getBoundingClientRect();
         const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
         const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
         const json = new TextEncoder().encode(JSON.stringify({ type, x, y }));
@@ -168,18 +287,18 @@
         input.send(message);
       }
       let pressed = false;
-      img.addEventListener('pointerdown', (e) => {
+      surface.addEventListener('pointerdown', (e) => {
         pressed = true;
-        img.setPointerCapture(e.pointerId);
+        surface.setPointerCapture(e.pointerId);
         sendTouch('begin', e);
         // Show where you clicked, as measure's --tap-a / --tap-b need it.
-        const rect = img.getBoundingClientRect();
+        const rect = surface.getBoundingClientRect();
         const x = ((e.clientX - rect.left) / rect.width).toFixed(2);
         const y = ((e.clientY - rect.top) / rect.height).toFixed(2);
         document.getElementById('point').textContent = 'last click: ' + x + ',' + y;
       });
-      img.addEventListener('pointermove', (e) => pressed && sendTouch('move', e));
-      img.addEventListener('pointerup', (e) => {
+      surface.addEventListener('pointermove', (e) => pressed && sendTouch('move', e));
+      surface.addEventListener('pointerup', (e) => {
         if (!pressed) return;
         pressed = false;
         sendTouch('end', e);

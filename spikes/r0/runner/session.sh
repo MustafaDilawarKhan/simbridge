@@ -63,8 +63,13 @@ echo "::add-mask::$SS_TOKEN"
 echo "::add-mask::$SESSION_TOKEN"
 
 # --- 1. serve-sim -------------------------------------------------------------
-echo "Starting serve-sim ${SERVE_SIM_VERSION} for $UDID..."
-if ! SERVE_SIM_AUTH_TOKEN="$SS_TOKEN" npx --yes "serve-sim@${SERVE_SIM_VERSION}" --detach --quiet "$UDID" \
+# H.264 is the main stream (run 5: full-size MJPEG needs about 44 Mbit/s for
+# 15 fps). serve-sim's own default scales up to about 19 Mbit/s for this
+# screen; cap it so a normal 20 Mbit/s home line keeps up (SERVE_SIM_MAX_BITRATE,
+# in Mbit/s, read by serve-sim 0.1.49, see src/max-bitrate.ts there).
+MAX_BITRATE_MBPS="${MAX_BITRATE_MBPS:-8}"
+echo "Starting serve-sim ${SERVE_SIM_VERSION} for $UDID (H.264 capped at ${MAX_BITRATE_MBPS} Mbit/s)..."
+if ! SERVE_SIM_MAX_BITRATE="$MAX_BITRATE_MBPS" SERVE_SIM_AUTH_TOKEN="$SS_TOKEN" npx --yes "serve-sim@${SERVE_SIM_VERSION}" --detach --quiet "$UDID" \
   >"$STATE_DIR/serve-sim.json" 2>"$STATE_DIR/serve-sim.err"; then
   echo "::error::serve-sim failed to start"
   cat "$STATE_DIR/serve-sim.err"

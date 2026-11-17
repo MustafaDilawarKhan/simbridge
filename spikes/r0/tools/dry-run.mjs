@@ -124,8 +124,9 @@ async function main() {
       '--taps=8',
       '--tap-a=0.3,0.94',
       '--tap-b=0.7,0.94',
-      '--fps-seconds=10',
-      '--avcc-seconds=3',
+      '--fps-seconds=8',
+      '--mjpeg-taps=2',
+      '--mjpeg-seconds=5',
       `--out=${resultFile}`,
     ],
     {
@@ -149,15 +150,17 @@ async function main() {
       result.timeToFirstFrameMs != null,
       `${result.timeToFirstFrameMs} ms`,
     );
+    // fake-sim draws each frame with pure-JavaScript JPEG encoding, so it manages
+    // only a few frames per second; these checks prove the measuring works.
     check(
-      'frame rate measured while scrolling',
-      result.mjpeg.fps > 10 && result.mjpeg.screenMoved,
-      `${result.mjpeg.fps} fps`,
+      'H.264 frame rate measured while scrolling',
+      result.h264.fps > 3 && result.h264.kilobytesPerSecond > 0,
+      `${result.h264.fps} fps, ${result.h264.kilobytesPerSecond} KB/s`,
     );
     check(
-      'H.264 data rate measured',
-      !result.avcc.error && result.avcc.kilobytesPerSecond > 0,
-      `${result.avcc.kilobytesPerSecond} KB/s`,
+      'MJPEG comparison measured',
+      result.mjpeg.fps > 3 && result.mjpeg.tapLag?.missed === 0,
+      `${result.mjpeg.fps} fps, tap lag median ${result.mjpeg.tapLag?.medianMs} ms`,
     );
     check(
       'WebSocket logs carried the app lines and keep-alives',

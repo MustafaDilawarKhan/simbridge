@@ -3,18 +3,24 @@
 // spikes/r0/results/<date>.json (no URL or token is ever written).
 //
 //   node tools/measure.mjs [r0v1.xxxx] [--tap-a=x,y] [--tap-b=x,y] [--watch=x0,y0,x1,y1]
-//                          [--taps=20] [--fps-seconds=30] [--avcc-seconds=15] [--out=file]
+//                          [--taps=20] [--fps-seconds=20] [--big-frame-bytes=3000]
+//                          [--mjpeg-taps=6] [--mjpeg-seconds=10] [--out=file]
 //
-// What it measures (NFR-PERF-01, NFR-PERF-02, NFR-PERF-04, FR-SIM-13):
-//   1. time to first video frame (MJPEG)
-//   2. tap lag: taps the two tabs in turn (each tap switches the screen) and
-//      times how long until the screen changes; median and p95
-//   3. frame rate and data rate of MJPEG while the list scrolls
-//   4. data rate of serve-sim's H.264 stream, for comparison
+// The main stream is H.264 (decided after run 5: full-size MJPEG needs about
+// 44 Mbit/s for 15 fps, more than a normal home line). What it measures
+// (NFR-PERF-01, NFR-PERF-02, NFR-PERF-04, FR-SIM-13):
+//   1. time to first H.264 frame
+//   2. tap lag over H.264: taps A and B in turn (each tap must change the
+//      screen) and times how long until the first large frame arrives.
+//      serve-sim sends frames only when the screen changes, and small ones for
+//      tiny changes such as a blinking cursor, so the first frame of at least
+//      --big-frame-bytes after a tap on a still screen is the app answering.
+//   3. H.264 frame rate and data rate while the list scrolls
+//   4. MJPEG, for comparison: time to first frame, a few taps (pixel
+//      comparison), frame rate and data rate while scrolling
 //   5. whether the WebSocket log stream connects and keeps delivering messages
 //
-// Frame arrival times are stamped before any decoding, and frames are decoded
-// only after each measuring window, so decoding cannot inflate the lag.
+// Arrival times are stamped as bytes arrive, before any parsing or decoding.
 // Don't touch the simulator while this runs.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -43,8 +49,10 @@ function option(name, fallback) {
   return hit ? hit.slice(name.length + 3) : fallback;
 }
 const TAPS = Number(option('taps', 20));
-const FPS_SECONDS = Number(option('fps-seconds', 30));
-const AVCC_SECONDS = Number(option('avcc-seconds', 15));
+const FPS_SECONDS = Number(option('fps-seconds', 20));
+const BIG_FRAME_BYTES = Number(option('big-frame-bytes', 3000));
+const MJPEG_TAPS = Number(option('mjpeg-taps', 6));
+const MJPEG_SECONDS = Number(option('mjpeg-seconds', 10));
 const TAP_A = parsePoint(option('tap-a'), DEFAULT_TAP_A);
 const TAP_B = parsePoint(option('tap-b'), DEFAULT_TAP_B);
 const WATCH = parseRect(option('watch'), DEFAULT_WATCH);
@@ -150,6 +158,52 @@ class MjpegReader {
   }
 }
 
+/** serve-sim's H.264 stream: records the arrival time, tag and size of every chunk. */
+class AvccReader {
+  constructor(url) {
+    this.url = url;
+    this.chunks = []; // { t, tag, size }, video frames only (tags 2 and 3)
+    this.bytes = 0;
+    this.frameCount = 0;
+    this.firstFrameMs = null;
+    this.lastBigAt = 0;
+    this.abort = new AbortController();
+  }
+
+  async start() {
+    const startedAt = now();
+    const response = await fetch(this.url, { signal: this.abort.signal });
+    if (!response.ok) throw new Error(`H.264 stream answered HTTP ${response.status}`);
+    const parser = new AvccParser((tag, size) => {
+      const t = this.chunkAt;
+      // The seed JPEG (tag 4) is the first picture a viewer sees.
+      if (this.firstFrameMs === null && (tag === 2 || tag === 3 || tag === 4)) {
+        this.firstFrameMs = t - startedAt;
+      }
+      if (tag !== 2 && tag !== 3) return;
+      this.frameCount += 1;
+      if (size >= BIG_FRAME_BYTES) this.lastBigAt = t;
+      this.chunks.push({ t, tag, size });
+      if (this.chunks.length > 5000) this.chunks.splice(0, this.chunks.length - 5000);
+    });
+    (async () => {
+      try {
+        for await (const chunk of response.body) {
+          this.chunkAt = now();
+          this.bytes += chunk.length;
+          parser.push(chunk);
+        }
+      } catch (error) {
+        if (error.name !== 'AbortError') console.error(`H.264 stream stopped: ${error.message}`);
+      }
+    })();
+  }
+
+  stop() {
+    this.abort.abort();
+  }
+}
+
 function openSocket(url, { binary = false } = {}) {
   return new Promise((resolveOpen, reject) => {
     const socket = new WebSocket(url);
@@ -213,9 +267,25 @@ async function waitFor(check, timeoutMs, stepMs = 50) {
   return check();
 }
 
-/** Waits until no frame has arrived for `quietMs` (or `maxMs` passes). True if it got quiet. */
+/** Waits until no MJPEG frame has arrived for `quietMs` (or `maxMs` passes). True if it got quiet. */
 async function waitQuiet(stream, quietMs = 300, maxMs = 3000) {
   return waitFor(() => now() - stream.lastFrameAt >= quietMs, maxMs, 25);
+}
+
+/** Waits until no large H.264 frame has arrived for `quietMs`. True if it got quiet. */
+async function waitQuietAvcc(avcc, quietMs = 600, maxMs = 4000) {
+  return waitFor(() => now() - avcc.lastBigAt >= quietMs, maxMs, 25);
+}
+
+function summarize(lags, count) {
+  return {
+    medianMs: round(percentile(lags, 50)),
+    p95Ms: round(percentile(lags, 95)),
+    minMs: lags.length ? round(Math.min(...lags)) : null,
+    maxMs: lags.length ? round(Math.max(...lags)) : null,
+    seen: lags.length,
+    missed: count - lags.length,
+  };
 }
 
 // --- Main --------------------------------------------------------------------
@@ -230,7 +300,9 @@ async function main() {
     settings: {
       taps: TAPS,
       fpsSeconds: FPS_SECONDS,
-      avccSeconds: AVCC_SECONDS,
+      bigFrameBytes: BIG_FRAME_BYTES,
+      mjpegTaps: MJPEG_TAPS,
+      mjpegSeconds: MJPEG_SECONDS,
       tapA: TAP_A,
       tapB: TAP_B,
       watch: WATCH,
@@ -256,89 +328,102 @@ async function main() {
     console.error(`  ${error.message}`);
   }
 
-  console.log('Opening the MJPEG stream...');
-  const stream = new MjpegReader(`${url}/stream.mjpeg?${q}`);
-  await stream.start();
-  if (!(await waitFor(() => stream.firstFrameMs !== null, 30000))) {
-    throw new Error('No video frame arrived within 30 s.');
+  // --- H.264: the main stream ---
+  console.log('Opening the H.264 stream...');
+  const avcc = new AvccReader(`${url}/stream.avcc?${q}`);
+  await avcc.start();
+  if (!(await waitFor(() => avcc.firstFrameMs !== null, 30000))) {
+    throw new Error('No H.264 picture arrived within 30 s.');
   }
-  result.timeToFirstFrameMs = round(stream.firstFrameMs);
-  console.log(`  first frame after ${result.timeToFirstFrameMs} ms`);
+  result.timeToFirstFrameMs = round(avcc.firstFrameMs);
+  console.log(`  first picture after ${result.timeToFirstFrameMs} ms`);
 
   console.log('Opening the tap input socket...');
   const input = await openSocket(`${wsBase}/ws?${q}`, { binary: true });
 
-  // Start on tab A, unmeasured, so the first measured tap (on B) changes the screen.
+  // Start on A, unmeasured, so the first measured tap (on B) changes the screen.
   await tap(input, TAP_A);
   await sleep(1500);
 
-  // --- Tap lag ---
-  console.log(`Measuring tap lag over ${TAPS} taps, switching tabs each time...`);
+  console.log(`Measuring tap lag over H.264, ${TAPS} taps, A and B in turn...`);
   const taps = [];
   for (let i = 1; i <= TAPS; i += 1) {
     const point = i % 2 === 1 ? TAP_B : TAP_A;
-    const quiet = await waitQuiet(stream);
-    const baseline = stream.latest();
+    const quiet = await waitQuietAvcc(avcc);
     const sentAt = await tap(input, point);
-    await sleep(2500); // collect frames; decode only afterwards
-    const after = stream.frames.filter((f) => f.t >= sentAt);
-    const hit = after.find((frame) => changedShare(baseline, frame, WATCH) > 0.01);
+    await waitFor(() => avcc.lastBigAt >= sentAt, 3000, 10);
+    const hit = avcc.chunks.find((c) => c.t >= sentAt && c.size >= BIG_FRAME_BYTES);
     const lagMs = hit ? hit.t - sentAt : null;
     taps.push({
       n: i,
-      tab: point === TAP_A ? 'A' : 'B',
+      point: point === TAP_A ? 'A' : 'B',
       lagMs: round(lagMs),
-      framesAfterTap: after.length,
+      frameBytes: hit?.size ?? null,
       screenWasQuiet: quiet,
     });
-    const shown = lagMs == null ? 'no change seen' : `${round(lagMs)} ms`;
-    console.log(`  tap ${String(i).padStart(2)}: ${shown}`);
-    await sleep(300 + Math.random() * 400); // jitter, so taps do not line up with frame timing
+    console.log(`  tap ${String(i).padStart(2)}: ${lagMs == null ? 'no change seen' : `${round(lagMs)} ms`}`);
+    await sleep(800 + Math.random() * 400); // let the screen settle; jitter vs frame timing
   }
   const lags = taps.map((t) => t.lagMs).filter((v) => v != null);
-  result.tapLag = {
-    medianMs: round(percentile(lags, 50)),
-    p95Ms: round(percentile(lags, 95)),
-    minMs: lags.length ? Math.min(...lags) : null,
-    maxMs: lags.length ? Math.max(...lags) : null,
-    seen: lags.length,
-    missed: taps.length - lags.length,
-    taps,
-  };
+  result.tapLag = { stream: 'H.264', ...summarize(lags, taps.length), taps };
 
-  // --- Frame rate and data rate while the list scrolls ---
-  console.log(`Measuring MJPEG frame rate for ${FPS_SECONDS} s while scrolling...`);
-  await tap(input, TAP_A); // the Search tab has the scrolling list
-  await sleep(1500);
-  const firstInWindow = stream.latest();
-  const fpsStart = now();
-  const countBefore = stream.count;
-  const bytesBefore = stream.bytes;
-  await keepScrolling(input, fpsStart + FPS_SECONDS * 1000);
-  const seconds = (now() - fpsStart) / 1000;
-  const framesInWindow = stream.count - countBefore;
-  const screenMoved = stream.frames
-    .slice(-10)
-    .some((frame) => changedShare(firstInWindow, frame, WATCH) > 0.01);
-  result.mjpeg = {
-    fps: round(framesInWindow / seconds, 1),
-    kilobytesPerSecond: round((stream.bytes - bytesBefore) / 1024 / seconds),
-    framesCounted: framesInWindow,
-    screenMoved,
+  console.log(`Measuring H.264 frame rate for ${FPS_SECONDS} s while scrolling...`);
+  await sleep(1000);
+  let start = now();
+  let framesBefore = avcc.frameCount;
+  let bytesBefore = avcc.bytes;
+  await keepScrolling(input, start + FPS_SECONDS * 1000);
+  let seconds = (now() - start) / 1000;
+  result.h264 = {
+    fps: round((avcc.frameCount - framesBefore) / seconds, 1),
+    kilobytesPerSecond: round((avcc.bytes - bytesBefore) / 1024 / seconds),
+    megabitsPerSecond: round(((avcc.bytes - bytesBefore) * 8) / 1e6 / seconds, 1),
   };
-  console.log(`  ${result.mjpeg.fps} fps, ${result.mjpeg.kilobytesPerSecond} KB/s`);
-  stream.stop();
-
-  // --- H.264 data rate, same scrolling ---
-  console.log(`Measuring the H.264 stream for ${AVCC_SECONDS} s while scrolling...`);
-  const scrolling = keepScrolling(input, now() + AVCC_SECONDS * 1000);
-  result.avcc = await measureAvcc(`${url}/stream.avcc?${q}`, AVCC_SECONDS);
-  await scrolling;
   console.log(
-    result.avcc.error
-      ? `  ${result.avcc.error}`
-      : `  ${result.avcc.framesPerSecond} frames/s, ${result.avcc.kilobytesPerSecond} KB/s`,
+    `  ${result.h264.fps} fps, ${result.h264.kilobytesPerSecond} KB/s (${result.h264.megabitsPerSecond} Mbit/s)`,
   );
+  avcc.stop();
+
+  // --- MJPEG, for comparison ---
+  console.log('Opening the MJPEG stream, for comparison...');
+  const stream = new MjpegReader(`${url}/stream.mjpeg?${q}`);
+  await stream.start();
+  const mjpegOk = await waitFor(() => stream.firstFrameMs !== null, 30000);
+  result.mjpeg = { timeToFirstFrameMs: mjpegOk ? round(stream.firstFrameMs) : null };
+  if (mjpegOk && MJPEG_TAPS > 0) {
+    console.log(`Measuring tap lag over MJPEG, ${MJPEG_TAPS} taps...`);
+    await sleep(1500);
+    const mjpegTaps = [];
+    for (let i = 1; i <= MJPEG_TAPS; i += 1) {
+      const point = i % 2 === 1 ? TAP_B : TAP_A;
+      await waitQuiet(stream);
+      const baseline = stream.latest();
+      const sentAt = await tap(input, point);
+      await sleep(4000); // collect frames; decode only afterwards
+      const hit = stream.frames
+        .filter((f) => f.t >= sentAt)
+        .find((frame) => changedShare(baseline, frame, WATCH) > 0.01);
+      const lagMs = hit ? hit.t - sentAt : null;
+      mjpegTaps.push(round(lagMs));
+      console.log(`  tap ${i}: ${lagMs == null ? 'no change seen' : `${round(lagMs)} ms`}`);
+    }
+    result.mjpeg.tapLag = summarize(
+      mjpegTaps.filter((v) => v != null),
+      mjpegTaps.length,
+    );
+  }
+  if (mjpegOk && MJPEG_SECONDS > 0) {
+    console.log(`Measuring MJPEG frame rate for ${MJPEG_SECONDS} s while scrolling...`);
+    start = now();
+    framesBefore = stream.count;
+    bytesBefore = stream.bytes;
+    await keepScrolling(input, start + MJPEG_SECONDS * 1000);
+    seconds = (now() - start) / 1000;
+    result.mjpeg.fps = round((stream.count - framesBefore) / seconds, 1);
+    result.mjpeg.kilobytesPerSecond = round((stream.bytes - bytesBefore) / 1024 / seconds);
+    console.log(`  ${result.mjpeg.fps} fps, ${result.mjpeg.kilobytesPerSecond} KB/s`);
+  }
+  stream.stop();
 
   input.close();
   logSocket?.close();
@@ -347,8 +432,9 @@ async function main() {
   result.gate = {
     tapLagMedianUnder400ms:
       result.tapLag.medianMs != null && result.tapLag.medianMs < GATE_TAP_LAG_MS,
-    mjpegAtLeast15fps: result.mjpeg.fps >= GATE_FPS,
-    mjpegThroughTunnel: result.timeToFirstFrameMs != null,
+    h264AtLeast15fps: result.h264.fps >= GATE_FPS,
+    videoThroughTunnel: result.timeToFirstFrameMs != null,
+    mjpegThroughTunnel: result.mjpeg.timeToFirstFrameMs != null,
     // The gateway sends a message every 5 s, so receiving any proves the WebSocket
     // path through the tunnel works even if the app itself logs little.
     webSocketLogsThroughTunnel: logs.connected && logs.ticks + logs.lines > 0,
@@ -361,60 +447,35 @@ async function main() {
   mkdirSync(dirname(outFile), { recursive: true });
   writeFileSync(outFile, `${JSON.stringify(result, null, 2)}\n`);
 
-  const { tapLag, mjpeg, avcc, gate } = result;
+  const { tapLag, h264, mjpeg, gate } = result;
+  const yes = (ok) => (ok ? 'PASS' : 'FAIL');
   console.log('');
   console.log('Result');
-  console.log(`  time to first frame   ${result.timeToFirstFrameMs} ms`);
+  console.log(`  first H.264 picture   ${result.timeToFirstFrameMs} ms`);
   console.log(
-    `  tap lag               median ${tapLag.medianMs} ms, p95 ${tapLag.p95Ms} ms (${tapLag.missed} missed)`,
+    `  tap lag (H.264)       median ${tapLag.medianMs} ms, p95 ${tapLag.p95Ms} ms (${tapLag.missed} of ${TAPS} missed)`,
   );
-  console.log(`  MJPEG                 ${mjpeg.fps} fps, ${mjpeg.kilobytesPerSecond} KB/s`);
-  console.log(`  H.264                 ${avcc.kilobytesPerSecond ?? '-'} KB/s`);
+  console.log(`  H.264 while scrolling ${h264.fps} fps, ${h264.megabitsPerSecond} Mbit/s`);
+  if (mjpeg.tapLag) {
+    console.log(
+      `  MJPEG (comparison)    tap lag median ${mjpeg.tapLag.medianMs} ms, ${mjpeg.fps ?? '-'} fps, ${mjpeg.kilobytesPerSecond ?? '-'} KB/s`,
+    );
+  }
   console.log(
     `  WebSocket logs        ${logs.connected ? 'connected' : 'FAILED'}, ${logs.lines} app lines, ${logs.ticks} keep-alive messages`,
   );
-  console.log(`  gate: tap lag         ${gate.tapLagMedianUnder400ms ? 'PASS' : 'FAIL'}`);
-  const streamsPass = gate.mjpegThroughTunnel && gate.webSocketLogsThroughTunnel;
-  console.log(`  gate: MJPEG + WS logs ${streamsPass ? 'PASS' : 'FAIL'}`);
+  console.log(`  gate: tap lag         ${yes(gate.tapLagMedianUnder400ms)}`);
+  console.log(`  gate: 15 fps (H.264)  ${yes(gate.h264AtLeast15fps)}`);
+  console.log(
+    `  gate: video + WS logs ${yes(gate.videoThroughTunnel && gate.mjpegThroughTunnel && gate.webSocketLogsThroughTunnel)}`,
+  );
   if (tapLag.missed > TAPS / 2) {
     console.log(
-      '  Most taps changed nothing: check --tap-a and --tap-b against the tab positions shown in the viewer.',
+      '  Most taps changed nothing: check --tap-a and --tap-b (each tap must visibly change the screen).',
     );
   }
   console.log(`Saved to ${outFile}`);
   process.exit(0);
-}
-
-async function measureAvcc(url, seconds) {
-  const abort = new AbortController();
-  const counts = { 1: 0, 2: 0, 3: 0, 4: 0 };
-  let bytes = 0;
-  try {
-    const response = await fetch(url, { signal: abort.signal });
-    if (!response.ok) return { error: `H.264 stream answered HTTP ${response.status}` };
-    const parser = new AvccParser((tag) => {
-      counts[tag] = (counts[tag] ?? 0) + 1;
-    });
-    const start = now();
-    setTimeout(() => abort.abort(), seconds * 1000);
-    try {
-      for await (const chunk of response.body) {
-        bytes += chunk.length;
-        parser.push(chunk);
-      }
-    } catch (error) {
-      if (error.name !== 'AbortError') throw error;
-    }
-    const elapsed = (now() - start) / 1000;
-    return {
-      kilobytesPerSecond: round(bytes / 1024 / elapsed),
-      framesPerSecond: round((counts[2] + counts[3]) / elapsed, 1),
-      keyframes: counts[2],
-      deltaFrames: counts[3],
-    };
-  } catch (error) {
-    return { error: `H.264 stream failed: ${error.message}` };
-  }
 }
 
 main().catch((error) => {

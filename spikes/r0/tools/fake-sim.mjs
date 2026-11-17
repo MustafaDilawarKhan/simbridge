@@ -81,7 +81,9 @@ function avccChunk(tag, size) {
   return out;
 }
 
-function emitFrame() {
+// Like real H.264: a changed screen gives a large delta frame, an unchanged
+// one a tiny delta (a real encoder sends nearly nothing for a still screen).
+function emitFrame(changed = true) {
   if (mjpegClients.size === 0 && avccClients.size === 0) return;
   const frame = renderJpeg();
   const part = Buffer.concat([
@@ -90,11 +92,12 @@ function emitFrame() {
     Buffer.from('\r\n'),
   ]);
   for (const res of mjpegClients) res.write(part);
-  for (const res of avccClients) res.write(avccChunk(3, Math.ceil(frame.length / 8)));
+  const size = changed ? Math.max(8000, Math.ceil(frame.length / 8)) : 200;
+  for (const res of avccClients) res.write(avccChunk(3, size));
 }
 
-// Send a frame on every change, and at least once a second.
-setInterval(emitFrame, 1000);
+// Send a frame on every change, and a tiny "nothing changed" frame once a second.
+setInterval(() => emitFrame(false), 1000);
 
 function onTouch(touch) {
   const inTabBar = touch.y >= TAB_BAR.y0 && touch.y <= TAB_BAR.y1;
@@ -103,9 +106,10 @@ function onTouch(touch) {
     if (inTabBar) {
       const tab = touch.x < 0.5 ? 'A' : 'B';
       setTimeout(() => {
-        if (state.tab !== tab) logLine(`switched to tab ${tab}`);
+        const changed = state.tab !== tab;
+        if (changed) logLine(`switched to tab ${tab}`);
         state.tab = tab;
-        emitFrame();
+        emitFrame(changed);
       }, LAG_MS);
     }
     return;
